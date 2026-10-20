@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nutzungsprotokoll</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --accent: #c00000;
+    --accent-text: #ffffff;
+    --border: #e0e0e5;
+    --focus: #0a6cff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111113;
+      --surface: #1c1c1f;
+      --text: #f2f2f4;
+      --muted: #9a9aa3;
+      --accent: #e03b3b;
+      --accent-text: #ffffff;
+      --border: #2c2c31;
+      --focus: #5aa9ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.4;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { margin: 8px 0 16px; font-size: 1.4rem; }
+  h2 { margin: 24px 0 8px; font-size: 1.05rem; }
+  input, select, button { font: inherit; }
+  input, select {
+    width: 100%;
+    padding: 10px 12px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: var(--muted); }
+  button {
+    padding: 10px 16px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  button.primary { color: var(--accent-text); background: var(--accent); border: 0; font-weight: 600; }
+  button:disabled { opacity: 0.6; cursor: wait; }
+  .panel {
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .toolbar > div { flex: 1 1 160px; }
+  .toolbar label { margin-top: 0; }
+  .toolbar button { flex: 0 0 auto; }
+  .status { margin: 12px 0; color: var(--muted); font-size: 0.9rem; }
+  .error { margin: 12px 0; color: var(--accent); font-size: 0.9rem; }
+  .hint { color: var(--muted); font-size: 0.85rem; }
+  .demo {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    background: var(--surface);
+    border: 2px dashed var(--accent);
+    border-radius: 10px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  #summary th, #summary td { padding-left: 4px; padding-right: 4px; font-size: 0.85rem; }
+  .scroll { overflow-x: auto; }
+  td a { color: var(--focus); }
+  td.text { overflow-wrap: anywhere; }
+  details summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Nutzungsprotokoll</h1>
+
+  <section class="panel" id="connect" hidden>
+    <p class="hint">
+      Diese App liest das Protokoll aus einem <strong>privaten</strong> GitHub-Repo, in das die Haupt-App schreibt.
+      Der Token braucht dort nur die Berechtigung „Contents: Read-only“. Er wird nur in diesem Browser gespeichert.
+    </p>
+    <form id="connect-form">
+      <label for="repo">Privates Repo (name/repo)</label>
+      <input type="text" id="repo" autocomplete="off" autocapitalize="off" required>
+      <label for="token">Token (nur Lesen)</label>
+      <input type="password" id="token" autocomplete="off" required>
+      <div class="row">
+        <button type="submit" class="primary" id="connect-btn">Verbinden</button>
+        <button type="button" id="demo-btn">Beispiel ansehen</button>
+      </div>
+    </form>
+    <p class="error" id="connect-error" role="alert"></p>
+  </section>
+
+  <section id="view" hidden>
+    <p class="demo" id="demo-banner" hidden>Beispieldaten: Das sind keine echten Einträge, nur eine Vorschau der Ansicht.</p>
+    <div class="toolbar">
+      <div>
+        <label for="period">Zeitraum</label>
+        <select id="period">
+          <option value="1">Heute</option>
+          <option value="3" selected>Letzte 3 Tage</option>
+          <option value="7">Letzte 7 Tage</option>
+          <option value="30">Letzte 30 Tage</option>
+        </select>
+      </div>
+      <div>
+        <label for="person">Person</label>
+        <select id="person"><option value="">Alle</option></select>
+      </div>
+      <button type="button" class="primary" id="refresh">Aktualisieren</button>
+    </div>
+    <p class="status" id="status" role="status"></p>
+    <p class="error" id="error" role="alert"></p>
+
+    <h2>Zusammenfassung</h2>
+    <div class="scroll"><table id="summary"></table></div>
+
+    <h2>Einzelne Abrufe</h2>
+    <div class="scroll"><table id="events"></table></div>
+
+    <details style="margin-top: 24px;">
+      <summary id="repo-line"></summary>
+      <div class="row"><button type="button" id="disconnect">Trennen und Token löschen</button></div>
+    </details>
+  </section>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const API = "https://api.github.com";
+  const KEY_REPO = "verlauf.repo";
+  const KEY_TOKEN = "verlauf.token";
+  const VIDEO_ID = /^[\w-]{11}$/;
+  const DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
+  const PARALLEL = 6;
+  // Bei diesen Arten zählt die Dauer zur Nutzungszeit.
+  const TIMED = new Set(["Video", "Short", "Webseite"]);
+
+  const $ = (id) => document.getElementById(id);
+  const connectEl = $("connect");
+  const viewEl = $("view");
+  const statusEl = $("status");
+  const errorEl = $("error");
+  const personEl = $("person");
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  const memory = {};
+  function load(key) {
+    try {
+      const v = localStorage.getItem(key);
+      if (v !== null) return v;
+    } catch (err) { /* gesperrt */ }
+    return memory[key] || "";
+  }
+  function save(key, value) {
+    memory[key] = value;
+    try {
+      if (value) localStorage.setItem(key, value);
+      else localStorage.removeItem(key);
+    } catch (err) { /* ignorieren */ }
+  }
+
+  function formatDuration(seconds) {
+    const s = Math.round(seconds);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const rest = String(s % 60).padStart(2, "0");
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${rest}` : `${m}:${rest}`;
+  }
+
+  // ---------- GitHub ----------
+
+  class ApiError extends Error {
+    constructor(status, message) {
+      super(message);
+      this.status = status;
+    }
+  }
+
+  async function github(path, token, raw) {
+    let res;
+    try {
+      res = await fetch(`${API}${path}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: raw ? "application/vnd.github.raw+json" : "application/vnd.github+json",
+        },
+      });
+    } catch (err) {
+      throw new ApiError(0, "GitHub ist nicht erreichbar.");
+    }
+    if (res.status === 401) throw new ApiError(401, "Der Token ist ungültig oder abgelaufen.");
+    if (res.status === 403) throw new ApiError(403, "Zugriff verweigert oder Limit erreicht. Bitte später erneut versuchen.");
+    if (res.status === 404) throw new ApiError(404, "Nicht gefunden. Repo-Name und Token-Zugriff prüfen.");
+    if (!res.ok) throw new ApiError(res.status, `GitHub antwortet mit ${res.status}.`);
+    return raw ? res.text() : res.json();
+  }
+
+  async function checkRepo(repo, token) {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new ApiError(0, "Das Repo bitte als name/repo angeben.");
+    const data = await github(`/repos/${repo}`, token, false);
+    if (data.private !== true) {
+      throw new ApiError(0, "Das Repo ist öffentlich, dann könnte jeder das Protokoll lesen. Bitte ein privates Repo verwenden.");
+    }
+    return data.full_name;
+  }
+
+  function localDay(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  async function pool(items, limit, worker) {
+    const results = [];
+    let next = 0;
+    async function run() {
+      while (next < items.length) {
+        const index = next++;
+        results[index] = await worker(items[index], index);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+    return results;
+  }
+
+  // Liest alle Protokolldateien der letzten `days` Tage und liefert die Einträge.
+  async function loadEvents(repo, token, days, onProgress) {
+    let dirs;
+    try {
+      dirs = await github(`/repos/${repo}/contents/logs`, token, false);
+    } catch (err) {
+      if (err.status === 404) return { events: [], files: 0, skipped: 0 };
+      throw err;
+    }
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - (days - 1));
+    const from = localDay(cutoff);
+    const dates = (Array.isArray(dirs) ? dirs : [])
+      .filter((d) => d.type === "dir" && DATE_DIR.test(d.name) && d.name >= from)
+      .map((d) => d.name);
+
+    const lists = await pool(dates, PARALLEL, (date) => github(`/repos/${repo}/contents/logs/${date}`, token, false));
+    const files = lists.flat().filter((f) => f && f.type === "file" && /\.json$/.test(f.name)).map((f) => f.path);
+
+    let done = 0;
+    let skipped = 0;
+    const parts = await pool(files, PARALLEL, async (path) => {
+      try {
+        const text = await github(`/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}`, token, true);
+        const data = JSON.parse(text);
+        return Array.isArray(data.events) ? data.events : [];
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) throw err;
+        skipped++;
+        return [];
+      } finally {
+        onProgress(++done, files.length);
+      }
+    });
+    return { events: parts.flat(), files: files.length, skipped };
+  }
+
+  // ---------- Anzeige ----------
+
+  let allEvents = [];
+  let demo = false;
+
+  function cleanEvent(e) {
+    if (!e || typeof e !== "object" || typeof e.t !== "string" || Number.isNaN(Date.parse(e.t))) return null;
+    return {
+      t: e.t,
+      who: String(e.who || "unbekannt"),
+      kind: String(e.kind || ""),
+      text: String(e.text || ""),
+      id: typeof e.id === "string" && VIDEO_ID.test(e.id) ? e.id : "",
+      seconds: Number.isFinite(e.seconds) && e.seconds > 0 ? e.seconds : 0,
+    };
+  }
+
+  function formatWhen(e) {
+    const start = new Date(e.t);
+    const date = start.toLocaleDateString("de-DE", { dateStyle: "short" });
+    const time = (d) => d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    if (TIMED.has(e.kind) && e.seconds > 0) {
+      return `${date}, ${time(start)} – ${time(new Date(start.getTime() + e.seconds * 1000))}`;
+    }
+    return `${date}, ${time(start)}`;
+  }
+
+  function row(cells, header) {
+    const tr = el("tr");
+    for (const cell of cells) {
+      const td = el(header ? "th" : "td", cell.className || "");
+      if (cell.node) td.append(cell.node);
+      else td.textContent = cell.text;
+      tr.append(td);
+    }
+    return tr;
+  }
+
+  function render() {
+    const person = personEl.value;
+    const events = allEvents
+      .filter((e) => !person || e.who === person)
+      .sort((a, b) => (a.t < b.t ? 1 : -1));
+
+    // Zusammenfassung je Person
+    const byPerson = new Map();
+    for (const e of events) {
+      const s = byPerson.get(e.who) || { videos: 0, shorts: 0, sites: 0, seconds: 0, last: "" };
+      if (e.kind === "Video") s.videos++;
+      if (e.kind === "Short") s.shorts++;
+      if (e.kind === "Webseite") s.sites++;
+      if (TIMED.has(e.kind)) s.seconds += e.seconds;
+      if (e.t > s.last) s.last = e.t;
+      byPerson.set(e.who, s);
+    }
+    const summary = $("summary");
+    summary.replaceChildren(row([
+      { text: "Wer" }, { text: "Videos", className: "num" }, { text: "Shorts", className: "num" },
+      { text: "Seiten", className: "num" }, { text: "Dauer", className: "num" }, { text: "Zuletzt" },
+    ], true));
+    for (const [name, s] of [...byPerson].sort((a, b) => b[1].seconds - a[1].seconds)) {
+      summary.append(row([
+        { text: name }, { text: String(s.videos), className: "num" }, { text: String(s.shorts), className: "num" },
+        { text: String(s.sites), className: "num" }, { text: formatDuration(s.seconds), className: "num" },
+        { text: new Date(s.last).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) },
+      ]));
+    }
+    if (byPerson.size === 0) summary.append(row([{ text: "Keine Daten im Zeitraum." }, { text: "" }, { text: "" }, { text: "" }, { text: "" }, { text: "" }]));
+
+    // Einzelne Einträge
+    const table = $("events");
+    table.replaceChildren(row([
+      { text: "Wann (von – bis)" }, { text: "Wer" }, { text: "Was" }, { text: "Wie lange", className: "num" },
+    ], true));
+    for (const e of events) {
+      let what;
+      const label = e.kind ? `${e.kind}: ${e.text}` : e.text;
+      if (e.id) {
+        const link = el("a", "", label);
+        link.href = `https://www.youtube.com/watch?v=${e.id}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        what = { node: link, className: "text" };
+      } else {
+        what = { text: label, className: "text" };
+      }
+      table.append(row([
+        { text: formatWhen(e) },
+        { text: e.who },
+        what,
+        { text: TIMED.has(e.kind) ? formatDuration(e.seconds) : "–", className: "num" },
+      ]));
+    }
+  }
+
+  function applyEvents(events) {
+    allEvents = events.map(cleanEvent).filter(Boolean);
+    const current = personEl.value;
+    const names = [...new Set(allEvents.map((e) => e.who))].sort((a, b) => a.localeCompare(b, "de"));
+    personEl.replaceChildren(el("option", "", "Alle"));
+    personEl.firstChild.value = "";
+    for (const name of names) {
+      const option = el("option", "", name);
+      option.value = name;
+      personEl.append(option);
+    }
+    personEl.value = names.includes(current) ? current : "";
+    render();
+  }
+
+  // Beispieldaten für die Vorschau. Sie sind deutlich als Beispiel gekennzeichnet.
+  function sampleEvents() {
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    const at = (h, m, sec) => new Date(day.getTime() + ((h * 60 + m) * 60 + sec) * 1000).toISOString();
+    return [
+      { t: at(15, 2, 11), who: "Beispiel Lena", kind: "Sitzung", text: "Entsperrt (Fingerabdruck)", seconds: 0 },
+      { t: at(15, 2, 40), who: "Beispiel Lena", kind: "Suche Videos", text: "Beispielsuche Katzen", seconds: 0 },
+      { t: at(15, 3, 5), who: "Beispiel Lena", kind: "Video", text: "Beispielvideo über Katzen – Beispielkanal", seconds: 312 },
+      { t: at(15, 8, 30), who: "Beispiel Lena", kind: "Suche Shorts", text: "Beispielkanal", seconds: 0 },
+      { t: at(15, 8, 52), who: "Beispiel Lena", kind: "Short", text: "Beispiel-Short 1 – Beispielkanal", seconds: 21 },
+      { t: at(15, 9, 14), who: "Beispiel Lena", kind: "Short", text: "Beispiel-Short 2 – Beispielkanal", seconds: 34 },
+      { t: at(16, 40, 3), who: "Beispiel Max", kind: "Sitzung", text: "Entsperrt (PIN)", seconds: 0 },
+      { t: at(16, 40, 30), who: "Beispiel Max", kind: "Webseite", text: "Beispielseite", seconds: 185 },
+      { t: at(16, 44, 20), who: "Beispiel Max", kind: "Video", text: "Beispielvideo über Spiele – Beispielkanal", seconds: 905 },
+    ];
+  }
+
+  async function refresh() {
+    const button = $("refresh");
+    errorEl.textContent = "";
+    if (demo) {
+      applyEvents(sampleEvents());
+      statusEl.textContent = "Beispielansicht.";
+      return;
+    }
+    const repo = load(KEY_REPO);
+    const token = load(KEY_TOKEN);
+    button.disabled = true;
+    statusEl.textContent = "Lade …";
+    try {
+      const days = Number($("period").value) || 3;
+      const result = await loadEvents(repo, token, days, (done, total) => {
+        statusEl.textContent = `Lade ${done} von ${total} Dateien …`;
+      });
+      applyEvents(result.events);
+      statusEl.textContent = `${allEvents.length} Einträge aus ${result.files} Dateien` +
+        (result.skipped ? `, ${result.skipped} Dateien übersprungen` : "") +
+        `, Stand ${new Date().toLocaleTimeString("de-DE")}.`;
+    } catch (err) {
+      statusEl.textContent = "";
+      errorEl.textContent = err.message;
+    }
+    button.disabled = false;
+  }
+
+  function showView() {
+    connectEl.hidden = true;
+    viewEl.hidden = false;
+    $("demo-banner").hidden = !demo;
+    $("repo-line").textContent = demo ? "Beispielansicht" : `Verbunden mit ${load(KEY_REPO)}`;
+    $("disconnect").textContent = demo ? "Beispiel beenden" : "Trennen und Token löschen";
+    refresh();
+  }
+
+  $("demo-btn").addEventListener("click", () => {
+    demo = true;
+    showView();
+  });
+
+  $("connect-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const repo = $("repo").value.trim();
+    const token = $("token").value.trim();
+    const button = $("connect-btn");
+    const error = $("connect-error");
+    error.textContent = "";
+    button.disabled = true;
+    try {
+      await checkRepo(repo, token);
+      save(KEY_REPO, repo);
+      save(KEY_TOKEN, token);
+      $("token").value = "";
+      showView();
+    } catch (err) {
+      error.textContent = err.message;
+    }
+    button.disabled = false;
+  });
+
+  $("refresh").addEventListener("click", refresh);
+  $("period").addEventListener("change", refresh);
+  personEl.addEventListener("change", render);
+  $("disconnect").addEventListener("click", () => {
+    if (!demo) save(KEY_TOKEN, "");
+    demo = false;
+    allEvents = [];
+    viewEl.hidden = true;
+    connectEl.hidden = false;
+    $("repo").value = load(KEY_REPO);
+  });
+
+  if (load(KEY_REPO) && load(KEY_TOKEN)) {
+    showView();
+  } else {
+    connectEl.hidden = false;
+    $("repo").value = load(KEY_REPO);
+  }
+})();
+</script>
+</body>
+</html>

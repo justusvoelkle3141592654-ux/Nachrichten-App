@@ -368,23 +368,10 @@
   .overlay .error { min-height: 1.3em; margin: 8px 0; color: var(--accent); font-size: 0.9rem; }
   .overlay .small { font-size: 0.85rem; }
 
-  /* Verlauf */
-  .history-head { display: flex; flex-wrap: wrap; gap: 8px; }
-  .history-head button { padding: 10px 14px; }
-  .history-count { margin: 12px 0; color: var(--muted); font-size: 0.9rem; }
-  .history-list { margin: 0; padding: 0; list-style: none; }
-  .history-list li {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 12px;
-    padding: 8px 0;
-    font-size: 0.9rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .h-time { flex: 0 0 auto; color: var(--muted); white-space: nowrap; }
-  .h-kind { flex: 0 0 auto; min-width: 7em; font-weight: 600; }
-  .h-text { flex: 1 1 14em; overflow-wrap: anywhere; }
-  a.h-text { color: var(--focus); }
+  .overlay input.who { margin-bottom: 8px; letter-spacing: normal; font-size: 1.1rem; }
+  .overlay .gate-bio { margin-top: 12px; }
+  dialog #bio-setup { margin-top: 8px; }
+  dialog .sync-status { margin: 12px 0 0; color: var(--muted); font-size: 0.85rem; }
 
   /* Kopfzeile in den Bereichen */
   .topbar {
@@ -463,11 +450,13 @@
   <div class="overlay" id="gate" hidden>
     <form id="gate-form">
       <h1>Geschützt</h1>
-      <p>Bitte PIN eingeben.</p>
-      <p class="small">Suchen und angesehene Inhalte werden im Verlauf gespeichert.</p>
-      <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="8" aria-label="PIN">
+      <p>Bitte mit PIN oder Fingerabdruck anmelden.</p>
+      <p class="small">Name, angesehene Inhalte und Dauer werden protokolliert.</p>
+      <input type="text" id="who" class="who" maxlength="30" autocomplete="off" placeholder="Name" aria-label="Name" required>
+      <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" aria-label="PIN">
       <p class="error" id="gate-error" role="alert"></p>
       <button type="submit" class="primary">Entsperren</button>
+      <button type="button" class="plain gate-bio" id="gate-bio" hidden>Mit Fingerabdruck anmelden</button>
     </form>
   </div>
   <div class="notice" id="file-notice" hidden>
@@ -484,13 +473,32 @@
 
 <dialog id="owner-dialog">
   <form id="owner-form">
-    <h2>Verlauf</h2>
+    <h2>Einstellungen</h2>
     <label for="owner-pin">PIN eingeben</label>
     <input type="password" id="owner-pin" inputmode="numeric" autocomplete="off" maxlength="8">
     <p class="error" id="owner-error" role="alert"></p>
     <div class="actions">
       <button type="button" class="plain" id="owner-cancel">Abbrechen</button>
       <button type="submit" class="primary">Öffnen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="sync-dialog">
+  <form id="sync-form">
+    <h2>Einstellungen</h2>
+    <label for="sync-repo">Privates GitHub-Repo (name/repo)</label>
+    <input type="text" id="sync-repo" autocomplete="off" autocapitalize="off">
+    <label for="sync-token">Token (Contents: Lesen und Schreiben)</label>
+    <input type="password" id="sync-token" autocomplete="off">
+    <p class="sync-status" id="sync-status" role="status"></p>
+    <p class="sync-status" id="bio-status"></p>
+    <button type="button" class="plain" id="bio-setup">Fingerabdruck einrichten</button>
+    <p class="error" id="sync-error" role="alert"></p>
+    <div class="actions">
+      <button type="button" class="plain" id="sync-remove">Trennen</button>
+      <button type="button" class="plain" id="sync-close">Schließen</button>
+      <button type="submit" class="primary">Speichern</button>
     </div>
   </form>
 </dialog>
@@ -542,8 +550,13 @@
   const PIN_HASH = "043cb0eb6910ffbaf8e56a7d49efabdf0a7aa96ffa60e458b90378e9b9dca561";
   const MAX_PIN_FAILS = 5;
   const PIN_LOCKOUT_MS = 60000;
-  const KEY_HISTORY = "dashboard.history";
-  const MAX_HISTORY = 1000;
+  const KEY_QUEUE = "dashboard.queue";
+  const KEY_SYNC = "dashboard.sync";
+  const KEY_WHO = "dashboard.who";
+  const KEY_DEVICE = "dashboard.device";
+  const KEY_PASSKEY = "dashboard.passkey";
+  const MAX_QUEUE = 500;
+  const FLUSH_MS = 30000;
   const KEY_PIN_STATE = "dashboard.pin";
   const KEY_UNLOCKED = "dashboard.unlocked";
 
@@ -571,14 +584,6 @@
   function save(key, value) {
     memory[key] = value;
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* ignorieren */ }
-  }
-
-  // Schreibt einen Eintrag in den Verlauf (nur in diesem Browser, die letzten MAX_HISTORY).
-  function logEvent(kind, text, id) {
-    const stored = load(KEY_HISTORY, []);
-    const entries = Array.isArray(stored) ? stored : [];
-    entries.push({ t: new Date().toISOString(), kind, text: String(text).slice(0, 200), id: id || "" });
-    save(KEY_HISTORY, entries.slice(-MAX_HISTORY));
   }
 
   function normalizeUrl(raw) {
@@ -721,7 +726,7 @@
 
     function playVideo(r) {
       const id = r.id;
-      logEvent("Video", `${r.title} – ${r.channel}`, id);
+      trackItem("Video", `${r.title} – ${r.channel}`, id);
       const iframe = el("iframe");
       iframe.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1`;
       iframe.referrerPolicy = "strict-origin-when-cross-origin";
@@ -978,7 +983,7 @@
       entry.frame.replaceChildren(iframe);
       current = entry;
       position = entries.indexOf(entry);
-      logEvent("Short", `${entry.title} – ${entry.channel}`, id);
+      trackItem("Short", `${entry.title} – ${entry.channel}`, id);
       watchLink.href = `https://www.youtube.com/shorts/${id}`;
       watch.hidden = false;
     }
@@ -1241,7 +1246,8 @@
     activeId = id;
     for (const t of tabs) t.pane.hidden = t.id !== id;
     const next = tabs.find((t) => t.id === id);
-    if (id.startsWith("custom-") && next) logEvent("Webseite", `${next.label} geöffnet`);
+    endItem();
+    if (id.startsWith("custom-") && next) trackItem("Webseite", next.label);
     topbar.hidden = id === "home";
     topbarTitle.textContent = next && id !== "home" ? next.label : "";
     if (next && next.onShow) next.onShow();
@@ -1306,10 +1312,10 @@
     const add = el("button", "plain add-site", "+ Webseite hinzufügen");
     add.type = "button";
     add.addEventListener("click", openDialog);
-    const history = el("button", "plain add-site", "Verlauf");
-    history.type = "button";
-    history.addEventListener("click", openOwnerDialog);
-    homePane.append(add, " ", history, el("p", "home-note", "Suchen und angesehene Inhalte werden im Verlauf gespeichert."));
+    const settings = el("button", "plain add-site", "Einstellungen");
+    settings.type = "button";
+    settings.addEventListener("click", openOwnerDialog);
+    homePane.append(add, " ", settings, el("p", "home-note", "Name, angesehene Inhalte und Dauer werden protokolliert."));
   }
 
   function openDialog() {
@@ -1404,6 +1410,7 @@
   const gateEl = document.getElementById("gate");
   const gateForm = document.getElementById("gate-form");
   const pinInput = document.getElementById("pin");
+  const whoInput = document.getElementById("who");
   const gateError = document.getElementById("gate-error");
 
   let unlocked = false;
@@ -1422,103 +1429,346 @@
     topbar.inert = !unlocked;
   }
 
+  function unlockAs(name, method) {
+    unlocked = true;
+    writeUnlocked();
+    who = name;
+    save(KEY_WHO, name);
+    gateError.textContent = "";
+    logEvent("Sitzung", `Entsperrt (${method})`);
+    updateAccess();
+  }
+
   gateForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    const name = whoInput.value.trim();
+    if (!name) {
+      gateError.textContent = "Bitte deinen Namen eingeben.";
+      whoInput.focus();
+      return;
+    }
     const result = checkPin(pinInput.value);
     pinInput.value = "";
     if (result.ok) {
-      unlocked = true;
-      writeUnlocked();
-      gateError.textContent = "";
-      logEvent("Sitzung", "Entsperrt");
-      updateAccess();
+      unlockAs(name, "PIN");
       return;
     }
     gateError.textContent = result.message;
     pinInput.focus();
   });
 
-  function startAccess() {
-    unlocked = readUnlocked();
-    updateAccess();
-    if (!unlocked) pinInput.focus();
+  // ---------- Fingerabdruck (WebAuthn) ----------
+
+  // Der Browser zeigt dafür das Fenster des Betriebssystems (auf Android die Fingerabdruck-
+  // Abfrage). Das geht nur über https und mit eingerichteter Displaysperre. Die App prüft
+  // nur, dass der Browser die Abfrage erfolgreich meldet, sie verifiziert keine Signatur.
+  const gateBio = document.getElementById("gate-bio");
+  const bioSetup = document.getElementById("bio-setup");
+  const bioStatus = document.getElementById("bio-status");
+
+  function bioSupported() {
+    return window.isSecureContext && "PublicKeyCredential" in window && Boolean(navigator.credentials);
+  }
+  function toBase64Url(buffer) {
+    let binary = "";
+    for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function fromBase64Url(text) {
+    const padded = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4);
+    return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+  }
+  function hasPasskey() {
+    return typeof load(KEY_PASSKEY, "") === "string" && load(KEY_PASSKEY, "") !== "";
   }
 
-  // ---------- Verlauf ----------
+  async function registerFingerprint() {
+    if (!bioSupported() || !(await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(() => false))) {
+      throw new Error("Hier nicht verfügbar. Es braucht eine https-Adresse und eine eingerichtete Displaysperre oder einen Fingerabdruck am Gerät.");
+    }
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: "Dashboard" },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "dashboard", displayName: "Dashboard" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" },
+        attestation: "none",
+        timeout: 60000,
+      },
+    });
+    if (!credential) throw new Error("Abgebrochen.");
+    save(KEY_PASSKEY, toBase64Url(credential.rawId));
+  }
 
-  const historyPane = el("section", "view pane history");
+  async function fingerprintLogin() {
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials: [{ type: "public-key", id: fromBase64Url(load(KEY_PASSKEY, "")), transports: ["internal"] }],
+        userVerification: "required",
+        timeout: 60000,
+      },
+    });
+    return Boolean(assertion);
+  }
+
+  async function tryFingerprint() {
+    const name = whoInput.value.trim();
+    if (!name) {
+      gateError.textContent = "Bitte deinen Namen eingeben.";
+      whoInput.focus();
+      return;
+    }
+    try {
+      if (await fingerprintLogin()) unlockAs(name, "Fingerabdruck");
+    } catch (err) {
+      gateError.textContent = "Fingerabdruck abgebrochen oder fehlgeschlagen. Bitte die PIN verwenden.";
+    }
+  }
+  gateBio.addEventListener("click", tryFingerprint);
+
+  function describeFingerprint() {
+    bioStatus.textContent = hasPasskey() ? "Fingerabdruck: eingerichtet." : "Fingerabdruck: nicht eingerichtet.";
+    bioSetup.textContent = hasPasskey() ? "Fingerabdruck entfernen" : "Fingerabdruck einrichten";
+  }
+  bioSetup.addEventListener("click", async () => {
+    syncError.textContent = "";
+    if (hasPasskey()) {
+      save(KEY_PASSKEY, "");
+    } else {
+      try {
+        await registerFingerprint();
+      } catch (err) {
+        syncError.textContent = err.name === "NotAllowedError" ? "Abgebrochen." : err.message;
+      }
+    }
+    describeFingerprint();
+  });
+
+  function startAccess() {
+    unlocked = readUnlocked();
+    const savedName = load(KEY_WHO, "");
+    who = typeof savedName === "string" ? savedName : "";
+    whoInput.value = who;
+    updateAccess();
+    startSync();
+    gateBio.hidden = !(bioSupported() && hasPasskey());
+    if (!unlocked) {
+      (whoInput.value ? pinInput : whoInput).focus();
+      // Mit eingerichtetem Fingerabdruck erscheint die Abfrage des Betriebssystems sofort.
+      if (!gateBio.hidden && whoInput.value) tryFingerprint();
+    }
+  }
+
+  // ---------- Nutzungsprotokoll ----------
+
+  const SYNC_API = "https://api.github.com";
+
+  let who = "";
+  let currentItem = null; // Was gerade angesehen wird: { kind, text, id, start, seconds }
+  let interrupted = null; // Wurde beim Verlassen der Seite unterbrochen, damit es danach weiterläuft
+  let lastTick = Date.now();
+  let flushing = false;
+  let syncState = { ok: null, at: 0, error: "" };
+
+  function deviceId() {
+    let id = load(KEY_DEVICE, "");
+    if (!/^[a-f0-9]{8}$/.test(id)) {
+      id = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+      save(KEY_DEVICE, id);
+    }
+    return id;
+  }
+
+  function pushEvent(kind, text, id, seconds, start) {
+    const stored = load(KEY_QUEUE, []);
+    const queue = Array.isArray(stored) ? stored : [];
+    queue.push({
+      t: start || new Date().toISOString(),
+      who,
+      kind,
+      text: String(text).slice(0, 200),
+      id: id || "",
+      seconds: Math.round(seconds || 0),
+    });
+    save(KEY_QUEUE, queue.slice(-MAX_QUEUE));
+  }
+
+  // Einzelereignis ohne Dauer, z. B. eine Suche.
+  function logEvent(kind, text, id) {
+    pushEvent(kind, text, id, 0);
+  }
+
+  // Beginnt etwas, dessen Dauer gemessen wird (Video, Short, Webseite).
+  function trackItem(kind, text, id) {
+    endItem();
+    currentItem = { kind, text, id: id || "", start: new Date().toISOString(), seconds: 0 };
+  }
+
+  function endItem() {
+    if (!currentItem) return;
+    pushEvent(currentItem.kind, currentItem.text, currentItem.id, currentItem.seconds, currentItem.start);
+    currentItem = null;
+  }
+
+  function tick() {
+    const now = Date.now();
+    // Lange Pausen (Ruhezustand) zählen nicht als Nutzung.
+    const delta = Math.min((now - lastTick) / 1000, 5);
+    lastTick = now;
+    if (unlocked && currentItem && document.visibilityState === "visible") currentItem.seconds += delta;
+  }
+
+  function authHeaders(token) {
+    return { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
+  }
+
+  function toBase64(text) {
+    let binary = "";
+    for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  }
+
+  function localDay(iso) {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  // Schreibt die wartenden Einträge als neue Datei ins private Repo. Jede Übertragung
+  // legt eine eigene Datei an, dadurch gibt es keine Schreibkonflikte.
+  async function flush(keepalive = false) {
+    const cfg = load(KEY_SYNC, null);
+    if (!cfg || !cfg.repo || !cfg.token || flushing) return;
+    const stored = load(KEY_QUEUE, []);
+    const queue = Array.isArray(stored) ? stored : [];
+    if (queue.length === 0) return;
+
+    const batch = queue.slice(0, keepalive ? 100 : 200);
+    const path = `logs/${localDay(batch[0].t)}/${deviceId()}-${Date.now()}.json`;
+    const content = toBase64(JSON.stringify({ device: deviceId(), events: batch }));
+    flushing = true;
+    try {
+      const res = await fetch(`${SYNC_API}/repos/${cfg.repo}/contents/${path}`, {
+        method: "PUT",
+        headers: { ...authHeaders(cfg.token), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "Protokoll", content }),
+        keepalive,
+      });
+      if (!res.ok) throw new Error(`GitHub antwortet mit ${res.status}`);
+      const rest = load(KEY_QUEUE, []);
+      save(KEY_QUEUE, (Array.isArray(rest) ? rest : []).slice(batch.length));
+      syncState = { ok: true, at: Date.now(), error: "" };
+    } catch (err) {
+      syncState = { ok: false, at: Date.now(), error: err.message };
+    } finally {
+      flushing = false;
+    }
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    lastTick = Date.now();
+    if (document.visibilityState === "hidden") {
+      // Beim Verlassen wird abgeschlossen und gesendet. Beim Zurückkommen läuft es weiter.
+      if (currentItem) interrupted = { kind: currentItem.kind, text: currentItem.text, id: currentItem.id };
+      endItem();
+      flush(true);
+    } else if (interrupted && unlocked) {
+      trackItem(interrupted.kind, interrupted.text, interrupted.id);
+      interrupted = null;
+    }
+  });
+  window.addEventListener("pagehide", () => { endItem(); flush(true); });
+
+  // ---------- Einstellungen (Verbindung zum privaten Repo) ----------
+
   const ownerDialog = document.getElementById("owner-dialog");
   const ownerForm = document.getElementById("owner-form");
   const ownerPin = document.getElementById("owner-pin");
   const ownerError = document.getElementById("owner-error");
+  const syncDialog = document.getElementById("sync-dialog");
+  const syncForm = document.getElementById("sync-form");
+  const syncRepo = document.getElementById("sync-repo");
+  const syncToken = document.getElementById("sync-token");
+  const syncStatus = document.getElementById("sync-status");
+  const syncError = document.getElementById("sync-error");
 
-  function readHistory() {
-    const list = load(KEY_HISTORY, []);
-    return (Array.isArray(list) ? list : []).filter((e) => e && typeof e.t === "string");
-  }
-
-  function csvCell(value) {
-    let s = String(value ?? "");
-    // Zellen, die mit = + - @ beginnen, würde Excel als Formel ausführen.
-    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-
-  function downloadHistory() {
-    const rows = [["Zeit", "Art", "Eintrag", "Video-ID"]];
-    for (const e of readHistory()) rows.push([e.t, e.kind, e.text, e.id]);
-    const csv = "﻿" + rows.map((r) => r.map(csvCell).join(";")).join("\r\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = el("a");
-    link.href = url;
-    link.download = `verlauf-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  function renderHistory() {
-    const entries = readHistory();
-
-    const head = el("div", "history-head");
-    const download = el("button", "primary", "Als Datei speichern (.csv)");
-    download.type = "button";
-    download.disabled = entries.length === 0;
-    download.addEventListener("click", downloadHistory);
-    const clear = el("button", "plain", "Verlauf löschen");
-    clear.type = "button";
-    clear.disabled = entries.length === 0;
-    clear.addEventListener("click", () => {
-      if (confirm("Den gesamten Verlauf löschen?")) {
-        save(KEY_HISTORY, []);
-        renderHistory();
-      }
-    });
-    head.append(download, clear);
-
-    const count = el("p", "history-count", `${entries.length} Einträge (neueste zuerst), gespeichert nur in diesem Browser.`);
-    const list = el("ul", "history-list");
-    for (const e of entries.slice().reverse()) {
-      const row = el("li");
-      const time = el("span", "h-time", new Date(e.t).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "medium" }));
-      const kind = el("span", "h-kind", String(e.kind ?? ""));
-      let text;
-      if (typeof e.id === "string" && VIDEO_ID.test(e.id)) {
-        text = el("a", "h-text", String(e.text ?? ""));
-        text.href = `https://www.youtube.com/watch?v=${e.id}`;
-        text.target = "_blank";
-        text.rel = "noopener noreferrer";
-      } else {
-        text = el("span", "h-text", String(e.text ?? ""));
-      }
-      row.append(time, kind, text);
-      list.append(row);
+  async function checkRepo(repo, token) {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return { ok: false, message: "Das Repo bitte als name/repo angeben." };
+    let res;
+    try {
+      res = await fetch(`${SYNC_API}/repos/${repo}`, { headers: authHeaders(token) });
+    } catch (err) {
+      return { ok: false, message: "GitHub ist nicht erreichbar." };
     }
-    historyPane.replaceChildren(head, count, list);
+    if (res.status === 401) return { ok: false, message: "Der Token ist ungültig oder abgelaufen." };
+    if (res.status === 404) return { ok: false, message: "Repo nicht gefunden, oder der Token hat dort keinen Zugriff." };
+    if (!res.ok) return { ok: false, message: `GitHub antwortet mit ${res.status}.` };
+    const data = await res.json();
+    if (data.private !== true) {
+      return { ok: false, message: "Das Repo ist öffentlich, dann könnte jeder das Protokoll lesen. Bitte ein privates Repo verwenden." };
+    }
+    if (data.permissions && data.permissions.push === false) {
+      return { ok: false, message: "Der Token darf in diesem Repo nicht schreiben." };
+    }
+    return { ok: true, message: `Verbunden mit ${data.full_name}.` };
   }
 
-  // Der Verlauf verlangt die PIN erneut, auch wenn die Seite schon entsperrt ist.
+  function describeSync() {
+    const stored = load(KEY_QUEUE, []);
+    const waiting = Array.isArray(stored) ? stored.length : 0;
+    const cfg = load(KEY_SYNC, null);
+    const parts = [cfg && cfg.repo ? `Verbunden mit ${cfg.repo}.` : "Nicht verbunden, das Protokoll bleibt nur auf diesem Gerät."];
+    parts.push(`Wartend: ${waiting} Einträge.`);
+    if (syncState.ok === true) parts.push("Letzte Übertragung erfolgreich.");
+    if (syncState.ok === false) parts.push(`Letzte Übertragung fehlgeschlagen: ${syncState.error}.`);
+    return parts.join(" ");
+  }
+
+  function openSettings() {
+    const cfg = load(KEY_SYNC, null);
+    syncForm.reset();
+    syncRepo.value = cfg && cfg.repo ? cfg.repo : "";
+    syncToken.placeholder = cfg && cfg.token ? "gespeichert (leer lassen zum Behalten)" : "";
+    syncError.textContent = "";
+    syncStatus.textContent = describeSync();
+    describeFingerprint();
+    syncDialog.showModal();
+  }
+
+  syncForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const cfg = load(KEY_SYNC, null);
+    const repo = syncRepo.value.trim();
+    const token = syncToken.value.trim() || (cfg && cfg.token) || "";
+    if (!token) {
+      syncError.textContent = "Bitte einen Token eingeben.";
+      return;
+    }
+    syncError.textContent = "";
+    syncStatus.textContent = "Prüfe Verbindung …";
+    const result = await checkRepo(repo, token);
+    if (!result.ok) {
+      syncError.textContent = result.message;
+      syncStatus.textContent = describeSync();
+      return;
+    }
+    save(KEY_SYNC, { repo, token });
+    syncToken.value = "";
+    await flush();
+    syncStatus.textContent = describeSync();
+  });
+  document.getElementById("sync-close").addEventListener("click", () => {
+    gateBio.hidden = !(bioSupported() && hasPasskey());
+    syncDialog.close();
+  });
+  document.getElementById("sync-remove").addEventListener("click", () => {
+    save(KEY_SYNC, null);
+    syncRepo.value = "";
+    syncStatus.textContent = describeSync();
+  });
+
+  // Die Einstellungen verlangen die PIN erneut, auch wenn die Seite schon entsperrt ist.
   function openOwnerDialog() {
     ownerForm.reset();
     ownerError.textContent = "";
@@ -1535,9 +1785,13 @@
       return;
     }
     ownerDialog.close();
-    renderHistory();
-    select("history");
+    openSettings();
   });
+
+  function startSync() {
+    setInterval(tick, 1000);
+    setInterval(() => flush(), FLUSH_MS);
+  }
 
   function init() {
     // Von file:// aus sendet der Browser keine Herkunft, und YouTube lehnt die Player ab.
@@ -1547,7 +1801,6 @@
     addTab("videos", "Videos", createSearchPane());
     const shorts = createShortsPane();
     addTab("shorts", "Shorts", shorts.pane, { onHide: shorts.onHide, onShow: shorts.onShow });
-    addTab("history", "Verlauf", historyPane);
 
     const stored = load(KEY_CUSTOM, []);
     customSites = (Array.isArray(stored) ? stored : [])
