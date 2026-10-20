@@ -1318,7 +1318,11 @@
     const settings = el("button", "plain add-site", "Einstellungen");
     settings.type = "button";
     settings.addEventListener("click", openOwnerDialog);
-    homePane.append(add, " ", settings, el("p", "home-note", "Gerät, angesehene Inhalte und Dauer werden protokolliert."));
+    homePane.append(
+      add, " ", settings,
+      el("p", "home-note", "Gerät, angesehene Inhalte und Dauer werden protokolliert."),
+      el("p", "home-note sync-note", syncSummary()),
+    );
   }
 
   function openDialog() {
@@ -1819,7 +1823,23 @@
     openSettings();
   });
 
+  // Kurzer Status für die Startseite: zeigt, ob das Protokoll an GitHub gesendet wird.
+  function syncSummary() {
+    const cfg = load(KEY_SYNC, null);
+    if (!cfg || !cfg.repo || !cfg.token) {
+      return "Übertragung: Es fehlt noch ein Token (Einstellungen). Bis dahin bleibt das Protokoll nur auf diesem Gerät.";
+    }
+    if (syncState.ok === false) return `Übertragung: Senden fehlgeschlagen (${syncState.error}).`;
+    const stored = load(KEY_QUEUE, []);
+    const waiting = Array.isArray(stored) ? stored.length : 0;
+    return waiting > 0 ? `Übertragung: eingerichtet, ${waiting} Einträge warten auf das Senden.` : "Übertragung: eingerichtet, alles gesendet.";
+  }
+  function updateSyncNote() {
+    for (const note of document.querySelectorAll(".sync-note")) note.textContent = syncSummary();
+  }
+
   function startSync() {
+    setInterval(updateSyncNote, 2000);
     setInterval(tick, 1000);
     setInterval(() => flush(), FLUSH_MS);
   }
