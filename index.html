@@ -189,7 +189,31 @@
   }
   .shorts .searchbar { padding: 12px 12px 0; }
   .shorts .status { margin: 8px 12px; min-height: 1.4em; }
-  .shorts .watch { margin: 0 12px 8px; }
+  .shortbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 8px;
+  }
+  .shortbar .watch { margin: 0; text-align: left; }
+  .tool {
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .tool.exit {
+    display: none;
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 2;
+    opacity: 0.85;
+  }
   .feed-wrap {
     position: relative;
     flex: 1;
@@ -264,6 +288,21 @@
   .step.up { top: calc(50% - 52px); }
   .step.down { top: calc(50% + 8px); }
   .feed-wrap.empty .step { display: none; }
+
+  /* Short im Vollbild: nur der Short und der Feed, alles andere ist ausgeblendet */
+  .app.immersive { background: #000; }
+  .app.immersive .notice,
+  .app.immersive .nav,
+  .app.immersive .shorts .searchbar,
+  .app.immersive .shorts .status,
+  .app.immersive .shortbar { display: none; }
+  .app.immersive .tool.exit { display: block; }
+  .app.immersive .feed-wrap { background: #000; }
+  .app.immersive .short-frame {
+    width: min(100cqw, calc(100cqh * 9 / 16));
+    border-radius: 0;
+  }
+  .app.immersive .step { opacity: 0.6; }
 
   /* Eingebettete Webseiten */
   .site {
@@ -447,6 +486,26 @@
     } catch (err) {
       return null;
     }
+  }
+
+  // Vollbild für die ganze Seite. Auf dem iPhone fehlt die Fullscreen-API für
+  // normale Elemente, dort bleibt nur der Short-Vollbildmodus per CSS.
+  function canFullscreen() {
+    const app = document.querySelector(".app");
+    return Boolean(app && (app.requestFullscreen || app.webkitRequestFullscreen));
+  }
+  function fullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+  function enterFullscreen() {
+    const app = document.querySelector(".app");
+    const request = app.requestFullscreen || app.webkitRequestFullscreen;
+    return request ? Promise.resolve(request.call(app)) : Promise.reject(new Error("unsupported"));
+  }
+  function exitFullscreen() {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit && fullscreenElement()) return Promise.resolve(exit.call(document)).catch(() => {});
+    return Promise.resolve();
   }
 
   // ---------- Videosuche über Piped/Invidious ----------
@@ -762,9 +821,20 @@
     const downBtn = el("button", "step down", "▼");
     downBtn.type = "button";
     downBtn.setAttribute("aria-label", "Nächster Short");
-    wrap.append(feed, upBtn, downBtn);
+    const exitBtn = el("button", "tool exit", "✕ Schließen");
+    exitBtn.type = "button";
+    exitBtn.setAttribute("aria-label", "Vollbild beenden");
+    wrap.append(feed, upBtn, downBtn, exitBtn);
 
-    pane.append(form, status, watch, wrap);
+    const pageBtn = el("button", "tool", "Seite im Vollbild");
+    pageBtn.type = "button";
+    pageBtn.hidden = !canFullscreen();
+    const shortBtn = el("button", "tool", "Short im Vollbild");
+    shortBtn.type = "button";
+    const bar = el("div", "shortbar");
+    bar.append(pageBtn, shortBtn, watch);
+
+    pane.append(form, status, bar, wrap);
 
     function showHint(text) {
       feed.replaceChildren(el("div", "feed-hint", text));
@@ -776,6 +846,7 @@
     let observer = null;
     let timer = 0;
     let entries = []; // Einträge des Feeds: { id, title, item, frame, thumb }
+    let position = 0; // Index des Shorts, der zuletzt im Bild war
     let current = null; // Eintrag, dessen Player gerade geladen ist
 
     function stop() {
@@ -798,6 +869,7 @@
       iframe.title = entry.title || "YouTube Short";
       entry.frame.replaceChildren(iframe);
       current = entry;
+      position = entries.indexOf(entry);
       watchLink.href = `https://www.youtube.com/shorts/${id}`;
       watch.hidden = false;
     }
@@ -843,6 +915,73 @@
     }
     upBtn.addEventListener("click", () => step(-1));
     downBtn.addEventListener("click", () => step(1));
+
+    // Nach einem Wechsel des Vollbildmodus ändert sich die Höhe des Feeds.
+    // Dann wird wieder auf den aktuellen Short gesprungen.
+    let realignTimer = 0;
+    function realign() {
+      clearTimeout(realignTimer);
+      realignTimer = setTimeout(() => {
+        feed.scrollTop = position * feed.clientHeight;
+      }, 100);
+    }
+    window.addEventListener("resize", realign);
+
+    const app = document.querySelector(".app");
+    let immersive = false;
+    let immersiveFullscreen = false; // Vollbild wurde vom Short-Modus gestartet
+
+    function setImmersive(on) {
+      immersive = on;
+      app.classList.toggle("immersive", on);
+      shortBtn.textContent = on ? "Short-Vollbild beenden" : "Short im Vollbild";
+      realign();
+    }
+
+    function leaveImmersive() {
+      setImmersive(false);
+      if (immersiveFullscreen) {
+        immersiveFullscreen = false;
+        exitFullscreen();
+      }
+    }
+
+    shortBtn.addEventListener("click", () => {
+      if (immersive) {
+        leaveImmersive();
+        return;
+      }
+      const alreadyFullscreen = Boolean(fullscreenElement());
+      setImmersive(true);
+      if (!alreadyFullscreen) {
+        enterFullscreen().then(() => { immersiveFullscreen = true; }).catch(() => {});
+      }
+    });
+    exitBtn.addEventListener("click", leaveImmersive);
+
+    pageBtn.addEventListener("click", () => {
+      if (fullscreenElement()) {
+        exitFullscreen();
+      } else {
+        enterFullscreen().catch(() => {
+          status.textContent = "Dein Browser erlaubt hier kein Vollbild.";
+        });
+      }
+    });
+
+    function onFullscreenChange() {
+      const on = Boolean(fullscreenElement());
+      pageBtn.textContent = on ? "Vollbild beenden" : "Seite im Vollbild";
+      // Esc im Vollbild beendet auch den Short-Vollbildmodus.
+      if (!on && immersive && immersiveFullscreen) leaveImmersive();
+      realign();
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+    // Ohne Fullscreen-API (z. B. iPhone) beendet Esc den Short-Modus per Tastatur.
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && immersive && !fullscreenElement()) leaveImmersive();
+    });
 
     async function search(query) {
       const id = ++searchId;
