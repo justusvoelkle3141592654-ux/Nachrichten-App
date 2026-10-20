@@ -132,7 +132,7 @@
         </select>
       </div>
       <div>
-        <label for="person">Person</label>
+        <label for="person">Gerät</label>
         <select id="person"><option value="">Alle</option></select>
       </div>
       <button type="button" class="primary" id="refresh">Aktualisieren</button>
@@ -305,7 +305,7 @@
     if (!e || typeof e !== "object" || typeof e.t !== "string" || Number.isNaN(Date.parse(e.t))) return null;
     return {
       t: e.t,
-      who: String(e.who || "unbekannt"),
+      who: String(e.who || "unbekanntes Gerät"),
       kind: String(e.kind || ""),
       text: String(e.text || ""),
       id: typeof e.id === "string" && VIDEO_ID.test(e.id) ? e.id : "",
@@ -353,7 +353,7 @@
     }
     const summary = $("summary");
     summary.replaceChildren(row([
-      { text: "Wer" }, { text: "Videos", className: "num" }, { text: "Shorts", className: "num" },
+      { text: "Gerät" }, { text: "Videos", className: "num" }, { text: "Shorts", className: "num" },
       { text: "Seiten", className: "num" }, { text: "Dauer", className: "num" }, { text: "Zuletzt" },
     ], true));
     for (const [name, s] of [...byPerson].sort((a, b) => b[1].seconds - a[1].seconds)) {
@@ -368,7 +368,7 @@
     // Einzelne Einträge
     const table = $("events");
     table.replaceChildren(row([
-      { text: "Wann (von – bis)" }, { text: "Wer" }, { text: "Was" }, { text: "Wie lange", className: "num" },
+      { text: "Wann (von – bis)" }, { text: "Gerät" }, { text: "Was" }, { text: "Wie lange", className: "num" },
     ], true));
     for (const e of events) {
       let what;
@@ -412,15 +412,15 @@
     day.setHours(0, 0, 0, 0);
     const at = (h, m, sec) => new Date(day.getTime() + ((h * 60 + m) * 60 + sec) * 1000).toISOString();
     return [
-      { t: at(15, 2, 11), who: "Beispiel Lena", kind: "Sitzung", text: "Entsperrt (Fingerabdruck)", seconds: 0 },
-      { t: at(15, 2, 40), who: "Beispiel Lena", kind: "Suche Videos", text: "Beispielsuche Katzen", seconds: 0 },
-      { t: at(15, 3, 5), who: "Beispiel Lena", kind: "Video", text: "Beispielvideo über Katzen – Beispielkanal", seconds: 312 },
-      { t: at(15, 8, 30), who: "Beispiel Lena", kind: "Suche Shorts", text: "Beispielkanal", seconds: 0 },
-      { t: at(15, 8, 52), who: "Beispiel Lena", kind: "Short", text: "Beispiel-Short 1 – Beispielkanal", seconds: 21 },
-      { t: at(15, 9, 14), who: "Beispiel Lena", kind: "Short", text: "Beispiel-Short 2 – Beispielkanal", seconds: 34 },
-      { t: at(16, 40, 3), who: "Beispiel Max", kind: "Sitzung", text: "Entsperrt (PIN)", seconds: 0 },
-      { t: at(16, 40, 30), who: "Beispiel Max", kind: "Webseite", text: "Beispielseite", seconds: 185 },
-      { t: at(16, 44, 20), who: "Beispiel Max", kind: "Video", text: "Beispielvideo über Spiele – Beispielkanal", seconds: 905 },
+      { t: at(15, 2, 11), who: "Beispiel-Android 1", kind: "Sitzung", text: "Entsperrt (Fingerabdruck)", seconds: 0 },
+      { t: at(15, 2, 40), who: "Beispiel-Android 1", kind: "Suche Videos", text: "Beispielsuche Katzen", seconds: 0 },
+      { t: at(15, 3, 5), who: "Beispiel-Android 1", kind: "Video", text: "Beispielvideo über Katzen – Beispielkanal", seconds: 312 },
+      { t: at(15, 8, 30), who: "Beispiel-Android 1", kind: "Suche Shorts", text: "Beispielkanal", seconds: 0 },
+      { t: at(15, 8, 52), who: "Beispiel-Android 1", kind: "Short", text: "Beispiel-Short 1 – Beispielkanal", seconds: 21 },
+      { t: at(15, 9, 14), who: "Beispiel-Android 1", kind: "Short", text: "Beispiel-Short 2 – Beispielkanal", seconds: 34 },
+      { t: at(16, 40, 3), who: "Beispiel-Android 2", kind: "Sitzung", text: "Entsperrt (PIN)", seconds: 0 },
+      { t: at(16, 40, 30), who: "Beispiel-Android 2", kind: "Webseite", text: "Beispielseite", seconds: 185 },
+      { t: at(16, 44, 20), who: "Beispiel-Android 2", kind: "Video", text: "Beispielvideo über Spiele – Beispielkanal", seconds: 905 },
     ];
   }
 

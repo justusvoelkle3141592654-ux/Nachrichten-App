@@ -451,8 +451,9 @@
     <form id="gate-form">
       <h1>Geschützt</h1>
       <p>Bitte mit PIN oder Fingerabdruck anmelden.</p>
-      <p class="small">Name, angesehene Inhalte und Dauer werden protokolliert.</p>
-      <input type="text" id="who" class="who" maxlength="30" autocomplete="off" placeholder="Name" aria-label="Name" required>
+      <p class="small">Gerät, angesehene Inhalte und Dauer werden protokolliert.</p>
+      <p class="small" id="who-known" hidden></p>
+      <input type="text" id="who" class="who" maxlength="30" autocomplete="off" placeholder="Gerätename, z. B. Lenas Android" aria-label="Gerätename (nur einmal)">
       <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" aria-label="PIN">
       <p class="error" id="gate-error" role="alert"></p>
       <button type="submit" class="primary">Entsperren</button>
@@ -487,6 +488,8 @@
 <dialog id="sync-dialog">
   <form id="sync-form">
     <h2>Einstellungen</h2>
+    <label for="sync-name">Gerätename</label>
+    <input type="text" id="sync-name" maxlength="30" autocomplete="off">
     <label for="sync-repo">Privates GitHub-Repo (name/repo)</label>
     <input type="text" id="sync-repo" autocomplete="off" autocapitalize="off">
     <label for="sync-token">Token (Contents: Lesen und Schreiben)</label>
@@ -1315,7 +1318,7 @@
     const settings = el("button", "plain add-site", "Einstellungen");
     settings.type = "button";
     settings.addEventListener("click", openOwnerDialog);
-    homePane.append(add, " ", settings, el("p", "home-note", "Name, angesehene Inhalte und Dauer werden protokolliert."));
+    homePane.append(add, " ", settings, el("p", "home-note", "Gerät, angesehene Inhalte und Dauer werden protokolliert."));
   }
 
   function openDialog() {
@@ -1411,6 +1414,7 @@
   const gateForm = document.getElementById("gate-form");
   const pinInput = document.getElementById("pin");
   const whoInput = document.getElementById("who");
+  const whoKnown = document.getElementById("who-known");
   const gateError = document.getElementById("gate-error");
 
   let unlocked = false;
@@ -1429,11 +1433,20 @@
     topbar.inert = !unlocked;
   }
 
+  // Der Gerätename wird nur beim ersten Mal abgefragt und dann im Browser gespeichert.
+  function showDeviceName() {
+    whoInput.hidden = Boolean(who);
+    whoKnown.hidden = !who;
+    whoKnown.textContent = who ? `Gerät: ${who}` : "";
+    whoInput.value = "";
+  }
+
   function unlockAs(name, method) {
     unlocked = true;
     writeUnlocked();
     who = name;
     save(KEY_WHO, name);
+    showDeviceName();
     gateError.textContent = "";
     logEvent("Sitzung", `Entsperrt (${method})`);
     updateAccess();
@@ -1441,9 +1454,9 @@
 
   gateForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    const name = whoInput.value.trim();
+    const name = who || whoInput.value.trim();
     if (!name) {
-      gateError.textContent = "Bitte deinen Namen eingeben.";
+      gateError.textContent = "Bitte einmal einen Gerätenamen eingeben.";
       whoInput.focus();
       return;
     }
@@ -1514,9 +1527,9 @@
   }
 
   async function tryFingerprint() {
-    const name = whoInput.value.trim();
+    const name = who || whoInput.value.trim();
     if (!name) {
-      gateError.textContent = "Bitte deinen Namen eingeben.";
+      gateError.textContent = "Bitte einmal einen Gerätenamen eingeben.";
       whoInput.focus();
       return;
     }
@@ -1550,14 +1563,14 @@
     unlocked = readUnlocked();
     const savedName = load(KEY_WHO, "");
     who = typeof savedName === "string" ? savedName : "";
-    whoInput.value = who;
+    showDeviceName();
     updateAccess();
     startSync();
     gateBio.hidden = !(bioSupported() && hasPasskey());
     if (!unlocked) {
-      (whoInput.value ? pinInput : whoInput).focus();
+      (who ? pinInput : whoInput).focus();
       // Mit eingerichtetem Fingerabdruck erscheint die Abfrage des Betriebssystems sofort.
-      if (!gateBio.hidden && whoInput.value) tryFingerprint();
+      if (!gateBio.hidden && who) tryFingerprint();
     }
   }
 
@@ -1688,6 +1701,7 @@
   const ownerError = document.getElementById("owner-error");
   const syncDialog = document.getElementById("sync-dialog");
   const syncForm = document.getElementById("sync-form");
+  const syncName = document.getElementById("sync-name");
   const syncRepo = document.getElementById("sync-repo");
   const syncToken = document.getElementById("sync-token");
   const syncStatus = document.getElementById("sync-status");
@@ -1728,6 +1742,7 @@
   function openSettings() {
     const cfg = load(KEY_SYNC, null);
     syncForm.reset();
+    syncName.value = who;
     syncRepo.value = cfg && cfg.repo ? cfg.repo : "";
     syncToken.placeholder = cfg && cfg.token ? "gespeichert (leer lassen zum Behalten)" : "";
     syncError.textContent = "";
@@ -1741,6 +1756,14 @@
     const cfg = load(KEY_SYNC, null);
     const repo = syncRepo.value.trim();
     const token = syncToken.value.trim() || (cfg && cfg.token) || "";
+    const newName = syncName.value.trim();
+    if (newName && newName !== who) {
+      who = newName;
+      save(KEY_WHO, who);
+      showDeviceName();
+      syncStatus.textContent = "Gerätename gespeichert.";
+    }
+    if (!repo && !token) return;
     if (!token) {
       syncError.textContent = "Bitte einen Token eingeben.";
       return;
