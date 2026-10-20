@@ -338,6 +338,48 @@
   }
   .frame .placeholder { color: var(--muted); }
 
+  /* PIN-Sperre, Tageslimit und Restzeit */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    background: var(--bg);
+  }
+  .overlay h1 { margin: 0 0 8px; font-size: 1.5rem; }
+  .overlay p { margin: 0 0 12px; color: var(--muted); }
+  .overlay form { display: flex; flex-direction: column; align-items: center; }
+  .overlay input {
+    width: 200px;
+    padding: 12px 14px;
+    text-align: center;
+    font-size: 1.4rem;
+    letter-spacing: 0.3em;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .overlay .error { min-height: 1.3em; margin: 8px 0; color: var(--accent); font-size: 0.9rem; }
+  .usage {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    z-index: 50;
+    padding: 4px 10px;
+    font-size: 0.85rem;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    pointer-events: none;
+  }
+
   /* Kopfzeile in den Bereichen */
   .topbar {
     flex: 0 0 auto;
@@ -411,6 +453,20 @@
 </head>
 <body>
 <div class="app">
+  <div class="overlay" id="gate" hidden>
+    <form id="gate-form">
+      <h1>Geschützt</h1>
+      <p>Bitte PIN eingeben.</p>
+      <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="8" aria-label="PIN">
+      <p class="error" id="gate-error" role="alert"></p>
+      <button type="submit" class="primary">Entsperren</button>
+    </form>
+  </div>
+  <div class="overlay" id="limit" hidden>
+    <h1>Tageslimit erreicht</h1>
+    <p id="limit-text"></p>
+  </div>
+  <div class="usage" id="usage" hidden></div>
   <div class="notice" id="file-notice" hidden>
     Die Datei ist lokal geöffnet. YouTube zeigt dann in den Playern „Fehler 153“, weil
     die Herkunft der Seite fehlt. Öffne die Seite über eine https-Adresse (z. B. GitHub
@@ -464,6 +520,17 @@
   const SHORTS_CHANNELS = 3;
   const SHORTS_PER_CHANNEL = 30;
   const CHANNEL_ID = /^UC[\w-]{22}$/;
+
+  // Zugang: Die PIN steht nur als Hash mit Salt im Code. Das Tageslimit zählt die Zeit,
+  // in der die Seite entsperrt und sichtbar ist. Beides gilt nur in diesem Browser.
+  const DAILY_LIMIT_SECONDS = 60;
+  const PIN_SALT = "dashboard-v1";
+  const PIN_HASH = "043cb0eb6910ffbaf8e56a7d49efabdf0a7aa96ffa60e458b90378e9b9dca561";
+  const MAX_PIN_FAILS = 5;
+  const PIN_LOCKOUT_MS = 60000;
+  const KEY_USAGE = "dashboard.usage";
+  const KEY_PIN_STATE = "dashboard.pin";
+  const KEY_UNLOCKED = "dashboard.unlocked";
 
   const KEY_CUSTOM = "dashboard.sites";
 
@@ -1040,6 +1107,7 @@
     // Beim Verlassen des Reiters wird der Player entfernt, damit nichts im
     // Hintergrund weiterläuft. Beim Zurückkehren startet der sichtbare Short neu.
     function onHide() {
+      if (immersive) leaveImmersive();
       stop();
     }
     function onShow() {
@@ -1242,6 +1310,154 @@
     select(site.id);
   });
 
+  // ---------- PIN und Tageslimit ----------
+
+  // SHA-256 in reinem JavaScript, damit es auch ohne crypto.subtle (kein https) läuft.
+  function sha256Hex(text) {
+    const bytes = new TextEncoder().encode(text);
+    const primes = [];
+    for (let n = 2; primes.length < 64; n++) {
+      if (primes.every((p) => n % p)) primes.push(n);
+    }
+    const frac = (x) => Math.floor((x - Math.floor(x)) * 4294967296);
+    const K = primes.map((p) => frac(Math.cbrt(p)));
+    const h = primes.slice(0, 8).map((p) => frac(Math.sqrt(p)));
+
+    const padded = new Uint8Array(((bytes.length + 9 + 63) >> 6) << 6);
+    padded.set(bytes);
+    padded[bytes.length] = 0x80;
+    const view = new DataView(padded.buffer);
+    view.setUint32(padded.length - 4, (bytes.length * 8) >>> 0);
+
+    const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+    const w = new Uint32Array(64);
+    for (let offset = 0; offset < padded.length; offset += 64) {
+      for (let i = 0; i < 16; i++) w[i] = view.getUint32(offset + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+        const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      let [a, b, c, d, e, f, g, hh] = h;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+        const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+        hh = g; g = f; f = e; e = (d + t1) >>> 0;
+        d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      [a, b, c, d, e, f, g, hh].forEach((v, i) => { h[i] = (h[i] + v) >>> 0; });
+    }
+    return h.map((v) => v.toString(16).padStart(8, "0")).join("");
+  }
+
+  const gateEl = document.getElementById("gate");
+  const gateForm = document.getElementById("gate-form");
+  const pinInput = document.getElementById("pin");
+  const gateError = document.getElementById("gate-error");
+  const limitEl = document.getElementById("limit");
+  const limitText = document.getElementById("limit-text");
+  const usageEl = document.getElementById("usage");
+
+  let unlocked = false;
+  let lastTick = Date.now();
+
+  function readUnlocked() {
+    try { return sessionStorage.getItem(KEY_UNLOCKED) === "1"; } catch (err) { return memory[KEY_UNLOCKED] === true; }
+  }
+  function writeUnlocked() {
+    memory[KEY_UNLOCKED] = true;
+    try { sessionStorage.setItem(KEY_UNLOCKED, "1"); } catch (err) { /* ignorieren */ }
+  }
+
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  function readUsage() {
+    const u = load(KEY_USAGE, null);
+    return u && u.day === today() && Number.isFinite(u.seconds) ? u.seconds : 0;
+  }
+  function formatTime(seconds) {
+    const s = Math.max(0, Math.ceil(seconds));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  // Beendet alle Player, damit bei erreichtem Limit nichts weiterläuft.
+  function stopPlayers() {
+    for (const frame of document.querySelectorAll("#main iframe")) frame.remove();
+    if (dialog.open) dialog.close();
+    exitFullscreen();
+    select("home");
+  }
+
+  function updateAccess() {
+    const used = readUsage();
+    const limitReached = used >= DAILY_LIMIT_SECONDS;
+    const wasLimited = !limitEl.hidden;
+    const blocked = !unlocked || limitReached;
+
+    gateEl.hidden = unlocked || limitReached;
+    limitEl.hidden = !limitReached;
+    usageEl.hidden = blocked;
+    main.inert = blocked;
+    topbar.inert = blocked;
+
+    limitText.textContent = "Das Tageslimit ist erreicht. Morgen geht es weiter.";
+    usageEl.textContent = `Rest heute: ${formatTime(DAILY_LIMIT_SECONDS - used)}`;
+    if (limitReached && !wasLimited) stopPlayers();
+  }
+
+  function tick() {
+    const now = Date.now();
+    // Lange Pausen (Ruhezustand) zählen nicht als Nutzung.
+    const delta = Math.min((now - lastTick) / 1000, 5);
+    lastTick = now;
+    if (unlocked && document.visibilityState === "visible") {
+      const used = readUsage();
+      if (used < DAILY_LIMIT_SECONDS) save(KEY_USAGE, { day: today(), seconds: used + delta });
+    }
+    updateAccess();
+  }
+
+  gateForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const state = load(KEY_PIN_STATE, { fails: 0, until: 0 });
+    const wait = Math.ceil((Number(state.until) - Date.now()) / 1000);
+    if (wait > 0) {
+      gateError.textContent = `Zu viele Versuche. Bitte ${wait} Sekunden warten.`;
+      return;
+    }
+    if (sha256Hex(`${PIN_SALT}:${pinInput.value.trim()}`) === PIN_HASH) {
+      save(KEY_PIN_STATE, { fails: 0, until: 0 });
+      unlocked = true;
+      writeUnlocked();
+      pinInput.value = "";
+      gateError.textContent = "";
+      lastTick = Date.now();
+      updateAccess();
+      return;
+    }
+    const fails = (Number(state.fails) || 0) + 1;
+    if (fails >= MAX_PIN_FAILS) {
+      save(KEY_PIN_STATE, { fails: 0, until: Date.now() + PIN_LOCKOUT_MS });
+      gateError.textContent = `Zu viele Versuche. Bitte ${PIN_LOCKOUT_MS / 1000} Sekunden warten.`;
+    } else {
+      save(KEY_PIN_STATE, { fails, until: 0 });
+      gateError.textContent = "Falsche PIN.";
+    }
+    pinInput.value = "";
+    pinInput.focus();
+  });
+
+  document.addEventListener("visibilitychange", () => { lastTick = Date.now(); });
+
+  function startAccess() {
+    unlocked = readUnlocked();
+    updateAccess();
+    setInterval(tick, 1000);
+    if (!unlocked && !gateEl.hidden) pinInput.focus();
+  }
+
   function init() {
     // Von file:// aus sendet der Browser keine Herkunft, und YouTube lehnt die Player ab.
     document.getElementById("file-notice").hidden = location.protocol !== "file:";
@@ -1259,6 +1475,7 @@
 
     renderHome();
     select("home");
+    startAccess();
   }
 
   init();
