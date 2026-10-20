@@ -133,19 +133,15 @@
 
   <section class="panel" id="connect" hidden>
     <p class="hint">
-      So verbindest du die Übersicht mit dem Protokoll der Haupt-App:
+      Die Übersicht liest das Protokoll aus dem Branch „protokoll“ eines GitHub-Repos. Normalerweise ist das schon
+      eingestellt. Hier kannst du ein anderes Repo wählen. Ein Token ist nur bei privaten Repos nötig
+      (Berechtigung „Contents: Read-only“). Er bleibt nur in diesem Browser.
     </p>
-    <ol class="hint">
-      <li>Lege auf GitHub ein <strong>privates</strong> Repo an, mit der Option „Add a README“.</li>
-      <li>Erstelle einen Fine-grained-Token nur für dieses Repo mit „Contents: Read-only“ (Einstellungen → Developer settings → Fine-grained tokens).</li>
-      <li>Trage Repo und Token unten ein. Beides bleibt nur in diesem Browser.</li>
-      <li>Trage in der Haupt-App unter „Einstellungen“ dasselbe Repo mit einem zweiten Token („Contents: Read and write“) ein. Sie schreibt dann das Protokoll dorthin.</li>
-    </ol>
     <form id="connect-form">
-      <label for="repo">Privates Repo (name/repo)</label>
+      <label for="repo">Repo (name/repo)</label>
       <input type="text" id="repo" autocomplete="off" autocapitalize="off" required>
-      <label for="token">Token (nur Lesen)</label>
-      <input type="password" id="token" autocomplete="off" required>
+      <label for="token">Token (optional)</label>
+      <input type="password" id="token" autocomplete="off">
       <div class="row">
         <button type="submit" class="primary" id="connect-btn">Verbinden</button>
         <button type="button" id="demo-btn">Beispiel ansehen</button>
@@ -183,7 +179,10 @@
 
     <details style="margin-top: 24px;">
       <summary id="repo-line"></summary>
-      <div class="row"><button type="button" id="disconnect">Trennen und Token löschen</button></div>
+      <div class="row">
+        <button type="button" id="disconnect">Anderes Repo oder Token eintragen</button>
+        <button type="button" id="demo-open">Beispielansicht</button>
+      </div>
     </details>
   </section>
 </div>
@@ -193,6 +192,9 @@
   "use strict";
 
   const API = "https://api.github.com";
+  // Standard: das öffentliche Protokoll der Haupt-App. Zum Lesen ist kein Token nötig.
+  const DEFAULT_REPO = "justusvoelkle3141592654-ux/Nachrichten-App";
+  const LOG_BRANCH = "protokoll";
   const KEY_REPO = "verlauf.repo";
   const KEY_TOKEN = "verlauf.token";
   const VIDEO_ID = /^[\w-]{11}$/;
@@ -251,17 +253,14 @@
   async function github(path, token, raw) {
     let res;
     try {
-      res = await fetch(`${API}${path}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: raw ? "application/vnd.github.raw+json" : "application/vnd.github+json",
-        },
-      });
+      const headers = { Accept: raw ? "application/vnd.github.raw+json" : "application/vnd.github+json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      res = await fetch(`${API}${path}`, { headers });
     } catch (err) {
       throw new ApiError(0, "GitHub ist nicht erreichbar.");
     }
     if (res.status === 401) throw new ApiError(401, "Der Token ist ungültig oder abgelaufen.");
-    if (res.status === 403) throw new ApiError(403, "Zugriff verweigert oder Limit erreicht. Bitte später erneut versuchen.");
+    if (res.status === 403) throw new ApiError(403, "Zugriff verweigert oder das Abruf-Limit von GitHub ist erreicht. Bitte später erneut versuchen.");
     if (res.status === 404) throw new ApiError(404, "Nicht gefunden. Repo-Name und Token-Zugriff prüfen.");
     if (!res.ok) throw new ApiError(res.status, `GitHub antwortet mit ${res.status}.`);
     return raw ? res.text() : res.json();
@@ -270,9 +269,6 @@
   async function checkRepo(repo, token) {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new ApiError(0, "Das Repo bitte als name/repo angeben.");
     const data = await github(`/repos/${repo}`, token, false);
-    if (data.private !== true) {
-      throw new ApiError(0, "Das Repo ist öffentlich, dann könnte jeder das Protokoll lesen. Bitte ein privates Repo verwenden.");
-    }
     return data.full_name;
   }
 
@@ -297,7 +293,7 @@
   async function loadEvents(repo, token, days, onProgress) {
     let dirs;
     try {
-      dirs = await github(`/repos/${repo}/contents/logs`, token, false);
+      dirs = await github(`/repos/${repo}/contents/logs?ref=${LOG_BRANCH}`, token, false);
     } catch (err) {
       if (err.status === 404) return { events: [], files: 0, skipped: 0 };
       throw err;
@@ -310,14 +306,14 @@
       .filter((d) => d.type === "dir" && DATE_DIR.test(d.name) && d.name >= from)
       .map((d) => d.name);
 
-    const lists = await pool(dates, PARALLEL, (date) => github(`/repos/${repo}/contents/logs/${date}`, token, false));
+    const lists = await pool(dates, PARALLEL, (date) => github(`/repos/${repo}/contents/logs/${date}?ref=${LOG_BRANCH}`, token, false));
     const files = lists.flat().filter((f) => f && f.type === "file" && /\.json$/.test(f.name)).map((f) => f.path);
 
     let done = 0;
     let skipped = 0;
     const parts = await pool(files, PARALLEL, async (path) => {
       try {
-        const text = await github(`/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}`, token, true);
+        const text = await github(`/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${LOG_BRANCH}`, token, true);
         const data = JSON.parse(text);
         return Array.isArray(data.events) ? data.events : [];
       } catch (err) {
@@ -467,7 +463,7 @@
       statusEl.textContent = "Beispielansicht.";
       return;
     }
-    const repo = load(KEY_REPO);
+    const repo = currentRepo();
     const token = load(KEY_TOKEN);
     button.disabled = true;
     statusEl.textContent = "Lade …";
@@ -491,10 +487,20 @@
     connectEl.hidden = true;
     viewEl.hidden = false;
     $("demo-banner").hidden = !demo;
-    $("repo-line").textContent = demo ? "Beispielansicht" : `Verbunden mit ${load(KEY_REPO)}`;
-    $("disconnect").textContent = demo ? "Beispiel beenden" : "Trennen und Token löschen";
+    $("repo-line").textContent = demo ? "Beispielansicht" : `Quelle: ${currentRepo()} (Branch ${LOG_BRANCH}), öffentlich lesbar`;
+    $("disconnect").textContent = demo ? "Beispiel beenden" : "Anderes Repo oder Token eintragen";
+    $("demo-open").hidden = demo;
     refresh();
   }
+
+  function currentRepo() {
+    return load(KEY_REPO) || DEFAULT_REPO;
+  }
+
+  $("demo-open").addEventListener("click", () => {
+    demo = true;
+    showView();
+  });
 
   $("demo-btn").addEventListener("click", () => {
     demo = true;
@@ -525,21 +531,21 @@
   $("period").addEventListener("change", refresh);
   personEl.addEventListener("change", render);
   $("disconnect").addEventListener("click", () => {
-    if (!demo) save(KEY_TOKEN, "");
-    demo = false;
+    if (demo) {
+      demo = false;
+      showView();
+      return;
+    }
     allEvents = [];
     viewEl.hidden = true;
     connectEl.hidden = false;
-    $("repo").value = load(KEY_REPO);
+    $("repo").value = currentRepo();
+    $("token").value = "";
   });
 
+  // Nach dem Passwort öffnet sich direkt das öffentliche Standard-Protokoll.
   function start() {
-    if (load(KEY_REPO) && load(KEY_TOKEN)) {
-      showView();
-    } else {
-      connectEl.hidden = false;
-      $("repo").value = load(KEY_REPO);
-    }
+    showView();
   }
 
   // ---------- Passwort ----------

@@ -490,7 +490,7 @@
     <h2>Einstellungen</h2>
     <label for="sync-name">Gerätename</label>
     <input type="text" id="sync-name" maxlength="30" autocomplete="off">
-    <label for="sync-repo">Privates GitHub-Repo (name/repo)</label>
+    <label for="sync-repo">GitHub-Repo für das Protokoll (name/repo)</label>
     <input type="text" id="sync-repo" autocomplete="off" autocapitalize="off">
     <label for="sync-token">Token (Contents: Lesen und Schreiben)</label>
     <input type="password" id="sync-token" autocomplete="off">
@@ -1577,6 +1577,9 @@
   // ---------- Nutzungsprotokoll ----------
 
   const SYNC_API = "https://api.github.com";
+  // Das Protokoll liegt im Branch "protokoll" dieses Repos. Es ist öffentlich lesbar.
+  const LOG_REPO = "justusvoelkle3141592654-ux/Nachrichten-App";
+  const LOG_BRANCH = "protokoll";
 
   let who = "";
   let currentItem = null; // Was gerade angesehen wird: { kind, text, id, start, seconds }
@@ -1665,7 +1668,7 @@
       const res = await fetch(`${SYNC_API}/repos/${cfg.repo}/contents/${path}`, {
         method: "PUT",
         headers: { ...authHeaders(cfg.token), "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "Protokoll", content }),
+        body: JSON.stringify({ message: "Protokoll", content, branch: LOG_BRANCH }),
         keepalive,
       });
       if (!res.ok) throw new Error(`GitHub antwortet mit ${res.status}`);
@@ -1719,13 +1722,17 @@
     if (res.status === 404) return { ok: false, message: "Repo nicht gefunden, oder der Token hat dort keinen Zugriff." };
     if (!res.ok) return { ok: false, message: `GitHub antwortet mit ${res.status}.` };
     const data = await res.json();
-    if (data.private !== true) {
-      return { ok: false, message: "Das Repo ist öffentlich, dann könnte jeder das Protokoll lesen. Bitte ein privates Repo verwenden." };
-    }
     if (data.permissions && data.permissions.push === false) {
       return { ok: false, message: "Der Token darf in diesem Repo nicht schreiben." };
     }
-    return { ok: true, message: `Verbunden mit ${data.full_name}.` };
+    try {
+      const branch = await fetch(`${SYNC_API}/repos/${repo}/branches/${LOG_BRANCH}`, { headers: authHeaders(token) });
+      if (branch.status === 404) return { ok: false, message: `Im Repo fehlt der Branch „${LOG_BRANCH}“.` };
+    } catch (err) {
+      return { ok: false, message: "GitHub ist nicht erreichbar." };
+    }
+    const note = data.private === true ? "" : " Das Repo ist öffentlich, das Protokoll kann jeder lesen.";
+    return { ok: true, message: `Verbunden mit ${data.full_name}.${note}` };
   }
 
   function describeSync() {
@@ -1743,7 +1750,7 @@
     const cfg = load(KEY_SYNC, null);
     syncForm.reset();
     syncName.value = who;
-    syncRepo.value = cfg && cfg.repo ? cfg.repo : "";
+    syncRepo.value = cfg && cfg.repo ? cfg.repo : LOG_REPO;
     syncToken.placeholder = cfg && cfg.token ? "gespeichert (leer lassen zum Behalten)" : "";
     syncError.textContent = "";
     syncStatus.textContent = describeSync();
@@ -1779,7 +1786,8 @@
     save(KEY_SYNC, { repo, token });
     syncToken.value = "";
     await flush();
-    syncStatus.textContent = describeSync();
+    const publicNote = result.message.includes("öffentlich") ? " Das Repo ist öffentlich, das Protokoll kann jeder lesen." : "";
+    syncStatus.textContent = `${describeSync()}${publicNote}`;
   });
   document.getElementById("sync-close").addEventListener("click", () => {
     gateBio.hidden = !(bioSupported() && hasPasskey());
