@@ -111,8 +111,13 @@
     color: var(--muted);
     font-size: 0.95rem;
   }
-  .status a {
+  .status a,
+  .watch a {
     color: var(--focus);
+  }
+  .watch {
+    color: var(--muted);
+    font-size: 0.9rem;
   }
   .grid {
     display: grid;
@@ -182,6 +187,10 @@
     <div class="placeholder">Wähle ein Video aus den Ergebnissen.</div>
   </div>
 
+  <div class="watch" id="watch" hidden>
+    Video startet nicht? <a id="watch-link" target="_blank" rel="noopener noreferrer">Auf YouTube öffnen</a>
+  </div>
+
   <div class="status" id="status" role="status" aria-live="polite"></div>
 
   <div class="grid" id="results"></div>
@@ -190,9 +199,9 @@
 <script>
   // Öffentliche Piped- und Invidious-Server. Sie werden der Reihe nach probiert.
   const PIPED_SERVERS = [
+    "api.piped.private.coffee",
     "pipedapi.kavin.rocks",
     "pipedapi.adminforge.de",
-    "api.piped.private.coffee",
   ];
   const INVIDIOUS_SERVERS = [
     "inv.nadeko.net",
@@ -213,6 +222,8 @@
   const playerEl = document.getElementById("player");
   const statusEl = document.getElementById("status");
   const resultsEl = document.getElementById("results");
+  const watchEl = document.getElementById("watch");
+  const watchLink = document.getElementById("watch-link");
 
   let searchId = 0;
 
@@ -284,6 +295,11 @@
     iframe.allow = "autoplay; encrypted-media; picture-in-picture";
     iframe.title = "YouTube-Player";
     playerEl.replaceChildren(iframe);
+
+    // Lokal per file:// geöffnet, sendet der Browser keinen Referer, und
+    // YouTube verweigert dann oft die Einbettung. Der Link ist der Ausweg.
+    watchLink.href = `https://www.youtube.com/watch?v=${id}`;
+    watchEl.hidden = false;
   }
 
   function selectCard(card) {
@@ -350,19 +366,23 @@
     resultsEl.replaceChildren();
     setStatus("Suche läuft …");
 
-    for (const server of SERVERS) {
-      try {
-        const data = await fetchJson(buildUrl(server, query));
-        if (id !== searchId) return;
-        reachedAny = true;
-        const results = parseResults(server, data);
-        if (results.length > 0) {
-          renderResults(results, server);
-          setBusy(false);
-          return;
+    // Öffentliche Server fallen oft kurz aus. War im ersten Durchgang keiner
+    // erreichbar, wird die Liste ein zweites Mal probiert.
+    for (let round = 0; round < 2 && !reachedAny; round++) {
+      for (const server of SERVERS) {
+        try {
+          const data = await fetchJson(buildUrl(server, query));
+          if (id !== searchId) return;
+          reachedAny = true;
+          const results = parseResults(server, data);
+          if (results.length > 0) {
+            renderResults(results, server);
+            setBusy(false);
+            return;
+          }
+        } catch (err) {
+          if (id !== searchId) return;
         }
-      } catch (err) {
-        if (id !== searchId) return;
       }
     }
 
