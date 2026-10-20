@@ -490,16 +490,11 @@
     <h2>Einstellungen</h2>
     <label for="sync-name">Gerätename</label>
     <input type="text" id="sync-name" maxlength="30" autocomplete="off">
-    <label for="sync-repo">GitHub-Repo für das Protokoll (name/repo)</label>
-    <input type="text" id="sync-repo" autocomplete="off" autocapitalize="off">
-    <label for="sync-token">Token (Contents: Lesen und Schreiben)</label>
-    <input type="password" id="sync-token" autocomplete="off">
     <p class="sync-status" id="sync-status" role="status"></p>
     <p class="sync-status" id="bio-status"></p>
     <button type="button" class="plain" id="bio-setup">Fingerabdruck einrichten</button>
     <p class="error" id="sync-error" role="alert"></p>
     <div class="actions">
-      <button type="button" class="plain" id="sync-remove">Trennen</button>
       <button type="button" class="plain" id="sync-close">Schließen</button>
       <button type="submit" class="primary">Speichern</button>
     </div>
@@ -554,9 +549,7 @@
   const MAX_PIN_FAILS = 5;
   const PIN_LOCKOUT_MS = 60000;
   const KEY_QUEUE = "dashboard.queue";
-  const KEY_SYNC = "dashboard.sync";
   const KEY_WHO = "dashboard.who";
-  const KEY_DEVICE = "dashboard.device";
   const KEY_PASSKEY = "dashboard.passkey";
   const MAX_QUEUE = 500;
   const FLUSH_MS = 30000;
@@ -1580,10 +1573,10 @@
 
   // ---------- Nutzungsprotokoll ----------
 
-  const SYNC_API = "https://api.github.com";
-  // Das Protokoll liegt im Branch "protokoll" dieses Repos. Es ist öffentlich lesbar.
-  const LOG_REPO = "justusvoelkle3141592654-ux/Nachrichten-App";
-  const LOG_BRANCH = "protokoll";
+  // Läuft über eine Netlify-Funktion derselben Website: kein Token, keine Einstellung
+  // nötig. Die Funktion speichert das Protokoll serverseitig, der Schlüssel zum
+  // Lesen (Passwort) steht nicht im Seitencode.
+  const LOG_ENDPOINT = "/.netlify/functions/log";
 
   let who = "";
   let currentItem = null; // Was gerade angesehen wird: { kind, text, id, start, seconds }
@@ -1591,15 +1584,6 @@
   let lastTick = Date.now();
   let flushing = false;
   let syncState = { ok: null, at: 0, error: "" };
-
-  function deviceId() {
-    let id = load(KEY_DEVICE, "");
-    if (!/^[a-f0-9]{8}$/.test(id)) {
-      id = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
-      save(KEY_DEVICE, id);
-    }
-    return id;
-  }
 
   function pushEvent(kind, text, id, seconds, start) {
     const stored = load(KEY_QUEUE, []);
@@ -1640,42 +1624,24 @@
     if (unlocked && currentItem && document.visibilityState === "visible") currentItem.seconds += delta;
   }
 
-  function authHeaders(token) {
-    return { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
-  }
-
-  function toBase64(text) {
-    let binary = "";
-    for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
-    return btoa(binary);
-  }
-
-  function localDay(iso) {
-    const d = new Date(iso);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }
-
-  // Schreibt die wartenden Einträge als neue Datei ins private Repo. Jede Übertragung
-  // legt eine eigene Datei an, dadurch gibt es keine Schreibkonflikte.
+  // Schickt die wartenden Einträge an die eigene Netlify-Funktion. Schlägt das fehl
+  // (z. B. offline), bleiben die Einträge in der Warteschlange und werden später erneut probiert.
   async function flush(keepalive = false) {
-    const cfg = load(KEY_SYNC, null);
-    if (!cfg || !cfg.repo || !cfg.token || flushing) return;
+    if (flushing) return;
     const stored = load(KEY_QUEUE, []);
     const queue = Array.isArray(stored) ? stored : [];
     if (queue.length === 0) return;
 
     const batch = queue.slice(0, keepalive ? 100 : 200);
-    const path = `logs/${localDay(batch[0].t)}/${deviceId()}-${Date.now()}.json`;
-    const content = toBase64(JSON.stringify({ device: deviceId(), events: batch }));
     flushing = true;
     try {
-      const res = await fetch(`${SYNC_API}/repos/${cfg.repo}/contents/${path}`, {
-        method: "PUT",
-        headers: { ...authHeaders(cfg.token), "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "Protokoll", content, branch: LOG_BRANCH }),
+      const res = await fetch(LOG_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ events: batch }),
         keepalive,
       });
-      if (!res.ok) throw new Error(`GitHub antwortet mit ${res.status}`);
+      if (!res.ok) throw new Error(`Server antwortet mit ${res.status}`);
       const rest = load(KEY_QUEUE, []);
       save(KEY_QUEUE, (Array.isArray(rest) ? rest : []).slice(batch.length));
       syncState = { ok: true, at: Date.now(), error: "" };
@@ -1700,7 +1666,7 @@
   });
   window.addEventListener("pagehide", () => { endItem(); flush(true); });
 
-  // ---------- Einstellungen (Verbindung zum privaten Repo) ----------
+  // ---------- Einstellungen (Gerätename, Fingerabdruck) ----------
 
   const ownerDialog = document.getElementById("owner-dialog");
   const ownerForm = document.getElementById("owner-form");
@@ -1709,64 +1675,29 @@
   const syncDialog = document.getElementById("sync-dialog");
   const syncForm = document.getElementById("sync-form");
   const syncName = document.getElementById("sync-name");
-  const syncRepo = document.getElementById("sync-repo");
-  const syncToken = document.getElementById("sync-token");
   const syncStatus = document.getElementById("sync-status");
   const syncError = document.getElementById("sync-error");
-
-  async function checkRepo(repo, token) {
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return { ok: false, message: "Das Repo bitte als name/repo angeben." };
-    let res;
-    try {
-      res = await fetch(`${SYNC_API}/repos/${repo}`, { headers: authHeaders(token) });
-    } catch (err) {
-      return { ok: false, message: "GitHub ist nicht erreichbar." };
-    }
-    if (res.status === 401) return { ok: false, message: "Der Token ist ungültig oder abgelaufen." };
-    if (res.status === 404) return { ok: false, message: "Repo nicht gefunden, oder der Token hat dort keinen Zugriff." };
-    if (!res.ok) return { ok: false, message: `GitHub antwortet mit ${res.status}.` };
-    const data = await res.json();
-    if (data.permissions && data.permissions.push === false) {
-      return { ok: false, message: "Der Token darf in diesem Repo nicht schreiben." };
-    }
-    try {
-      const branch = await fetch(`${SYNC_API}/repos/${repo}/branches/${LOG_BRANCH}`, { headers: authHeaders(token) });
-      if (branch.status === 404) return { ok: false, message: `Im Repo fehlt der Branch „${LOG_BRANCH}“.` };
-    } catch (err) {
-      return { ok: false, message: "GitHub ist nicht erreichbar." };
-    }
-    const note = data.private === true ? "" : " Das Repo ist öffentlich, das Protokoll kann jeder lesen.";
-    return { ok: true, message: `Verbunden mit ${data.full_name}.${note}` };
-  }
 
   function describeSync() {
     const stored = load(KEY_QUEUE, []);
     const waiting = Array.isArray(stored) ? stored.length : 0;
-    const cfg = load(KEY_SYNC, null);
-    const parts = [cfg && cfg.repo ? `Verbunden mit ${cfg.repo}.` : "Nicht verbunden, das Protokoll bleibt nur auf diesem Gerät."];
-    parts.push(`Wartend: ${waiting} Einträge.`);
+    const parts = [`Wartend: ${waiting} Einträge.`];
     if (syncState.ok === true) parts.push("Letzte Übertragung erfolgreich.");
     if (syncState.ok === false) parts.push(`Letzte Übertragung fehlgeschlagen: ${syncState.error}.`);
     return parts.join(" ");
   }
 
   function openSettings() {
-    const cfg = load(KEY_SYNC, null);
     syncForm.reset();
     syncName.value = who;
-    syncRepo.value = cfg && cfg.repo ? cfg.repo : LOG_REPO;
-    syncToken.placeholder = cfg && cfg.token ? "gespeichert (leer lassen zum Behalten)" : "";
     syncError.textContent = "";
     syncStatus.textContent = describeSync();
     describeFingerprint();
     syncDialog.showModal();
   }
 
-  syncForm.addEventListener("submit", async (event) => {
+  syncForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    const cfg = load(KEY_SYNC, null);
-    const repo = syncRepo.value.trim();
-    const token = syncToken.value.trim() || (cfg && cfg.token) || "";
     const newName = syncName.value.trim();
     if (newName && newName !== who) {
       who = newName;
@@ -1774,33 +1705,11 @@
       showDeviceName();
       syncStatus.textContent = "Gerätename gespeichert.";
     }
-    if (!repo && !token) return;
-    if (!token) {
-      syncError.textContent = "Bitte einen Token eingeben.";
-      return;
-    }
-    syncError.textContent = "";
-    syncStatus.textContent = "Prüfe Verbindung …";
-    const result = await checkRepo(repo, token);
-    if (!result.ok) {
-      syncError.textContent = result.message;
-      syncStatus.textContent = describeSync();
-      return;
-    }
-    save(KEY_SYNC, { repo, token });
-    syncToken.value = "";
-    await flush();
-    const publicNote = result.message.includes("öffentlich") ? " Das Repo ist öffentlich, das Protokoll kann jeder lesen." : "";
-    syncStatus.textContent = `${describeSync()}${publicNote}`;
+    syncDialog.close();
   });
   document.getElementById("sync-close").addEventListener("click", () => {
     gateBio.hidden = !(bioSupported() && hasPasskey());
     syncDialog.close();
-  });
-  document.getElementById("sync-remove").addEventListener("click", () => {
-    save(KEY_SYNC, null);
-    syncRepo.value = "";
-    syncStatus.textContent = describeSync();
   });
 
   // Die Einstellungen verlangen die PIN erneut, auch wenn die Seite schon entsperrt ist.
@@ -1823,16 +1732,12 @@
     openSettings();
   });
 
-  // Kurzer Status für die Startseite: zeigt, ob das Protokoll an GitHub gesendet wird.
+  // Kurzer Status für die Startseite: zeigt, ob das Protokoll gesendet wird.
   function syncSummary() {
-    const cfg = load(KEY_SYNC, null);
-    if (!cfg || !cfg.repo || !cfg.token) {
-      return "Übertragung: Es fehlt noch ein Token (Einstellungen). Bis dahin bleibt das Protokoll nur auf diesem Gerät.";
-    }
     if (syncState.ok === false) return `Übertragung: Senden fehlgeschlagen (${syncState.error}).`;
     const stored = load(KEY_QUEUE, []);
     const waiting = Array.isArray(stored) ? stored.length : 0;
-    return waiting > 0 ? `Übertragung: eingerichtet, ${waiting} Einträge warten auf das Senden.` : "Übertragung: eingerichtet, alles gesendet.";
+    return waiting > 0 ? `Übertragung: ${waiting} Einträge warten auf das Senden.` : "Übertragung: alles gesendet.";
   }
   function updateSyncNote() {
     for (const note of document.querySelectorAll(".sync-note")) note.textContent = syncSummary();

@@ -131,25 +131,6 @@
 <div class="wrap" id="app" hidden>
   <h1>Nutzungsprotokoll</h1>
 
-  <section class="panel" id="connect" hidden>
-    <p class="hint">
-      Die Übersicht liest das Protokoll aus dem Branch „protokoll“ eines GitHub-Repos. Normalerweise ist das schon
-      eingestellt. Hier kannst du ein anderes Repo wählen. Ein Token ist nur bei privaten Repos nötig
-      (Berechtigung „Contents: Read-only“). Er bleibt nur in diesem Browser.
-    </p>
-    <form id="connect-form">
-      <label for="repo">Repo (name/repo)</label>
-      <input type="text" id="repo" autocomplete="off" autocapitalize="off" required>
-      <label for="token">Token (optional)</label>
-      <input type="password" id="token" autocomplete="off">
-      <div class="row">
-        <button type="submit" class="primary" id="connect-btn">Verbinden</button>
-        <button type="button" id="demo-btn">Beispiel ansehen</button>
-      </div>
-    </form>
-    <p class="error" id="connect-error" role="alert"></p>
-  </section>
-
   <section id="view" hidden>
     <p class="demo" id="demo-banner" hidden>Beispieldaten: Das sind keine echten Einträge, nur eine Vorschau der Ansicht.</p>
     <div class="toolbar">
@@ -177,13 +158,10 @@
     <h2>Einzelne Abrufe</h2>
     <div class="scroll"><table id="events"></table></div>
 
-    <details style="margin-top: 24px;">
-      <summary id="repo-line"></summary>
-      <div class="row">
-        <button type="button" id="disconnect">Anderes Repo oder Token eintragen</button>
-        <button type="button" id="demo-open">Beispielansicht</button>
-      </div>
-    </details>
+    <p class="hint" id="source-line"></p>
+    <div class="row">
+      <button type="button" id="demo-toggle"></button>
+    </div>
   </section>
 </div>
 
@@ -191,20 +169,14 @@
 (() => {
   "use strict";
 
-  const API = "https://api.github.com";
-  // Standard: das öffentliche Protokoll der Haupt-App. Zum Lesen ist kein Token nötig.
-  const DEFAULT_REPO = "justusvoelkle3141592654-ux/Nachrichten-App";
-  const LOG_BRANCH = "protokoll";
-  const KEY_REPO = "verlauf.repo";
-  const KEY_TOKEN = "verlauf.token";
+  // Läuft über eine Netlify-Funktion derselben Website. Die Funktion verlangt das
+  // Passwort als Kopfzeile und liest das Protokoll serverseitig aus Netlify Blobs.
+  const EVENTS_ENDPOINT = "/.netlify/functions/events";
   const VIDEO_ID = /^[\w-]{11}$/;
-  const DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
-  const PARALLEL = 6;
   // Bei diesen Arten zählt die Dauer zur Nutzungszeit.
   const TIMED = new Set(["Video", "Short", "Webseite"]);
 
   const $ = (id) => document.getElementById(id);
-  const connectEl = $("connect");
   const viewEl = $("view");
   const statusEl = $("status");
   const errorEl = $("error");
@@ -241,7 +213,7 @@
     return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${rest}` : `${m}:${rest}`;
   }
 
-  // ---------- GitHub ----------
+  // ---------- Netlify-Funktion ----------
 
   class ApiError extends Error {
     constructor(status, message) {
@@ -250,81 +222,24 @@
     }
   }
 
-  async function github(path, token, raw) {
+  // Fragt das Protokoll der letzten `days` Tage ab. Das Passwort wird als Kopfzeile
+  // mitgeschickt und dort serverseitig geprüft, nicht im Seitencode.
+  async function loadEvents(days, password) {
     let res;
     try {
-      const headers = { Accept: raw ? "application/vnd.github.raw+json" : "application/vnd.github+json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      res = await fetch(`${API}${path}`, { headers });
+      res = await fetch(`${EVENTS_ENDPOINT}?days=${days}`, { headers: { "X-Password": password } });
     } catch (err) {
-      throw new ApiError(0, "GitHub ist nicht erreichbar.");
+      throw new ApiError(0, "Die Übersicht ist nicht erreichbar. Läuft diese Seite über Netlify (nicht über GitHub Pages)?");
     }
-    if (res.status === 401) throw new ApiError(401, "Der Token ist ungültig oder abgelaufen.");
-    if (res.status === 403) throw new ApiError(403, "Zugriff verweigert oder das Abruf-Limit von GitHub ist erreicht. Bitte später erneut versuchen.");
-    if (res.status === 404) throw new ApiError(404, "Nicht gefunden. Repo-Name und Token-Zugriff prüfen.");
-    if (!res.ok) throw new ApiError(res.status, `GitHub antwortet mit ${res.status}.`);
-    return raw ? res.text() : res.json();
-  }
-
-  async function checkRepo(repo, token) {
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new ApiError(0, "Das Repo bitte als name/repo angeben.");
-    const data = await github(`/repos/${repo}`, token, false);
-    return data.full_name;
-  }
-
-  function localDay(date) {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  }
-
-  async function pool(items, limit, worker) {
-    const results = [];
-    let next = 0;
-    async function run() {
-      while (next < items.length) {
-        const index = next++;
-        results[index] = await worker(items[index], index);
-      }
+    if (res.status === 401) throw new ApiError(401, "Falsches Passwort (vom Server abgelehnt).");
+    if (res.status === 404) throw new ApiError(404, "Die Funktion wurde nicht gefunden. Ist sie bei Netlify veröffentlicht?");
+    if (res.status === 500) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(500, body.error || "Der Server ist nicht eingerichtet.");
     }
-    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
-    return results;
-  }
-
-  // Liest alle Protokolldateien der letzten `days` Tage und liefert die Einträge.
-  async function loadEvents(repo, token, days, onProgress) {
-    let dirs;
-    try {
-      dirs = await github(`/repos/${repo}/contents/logs?ref=${LOG_BRANCH}`, token, false);
-    } catch (err) {
-      if (err.status === 404) return { events: [], files: 0, skipped: 0 };
-      throw err;
-    }
-    const cutoff = new Date();
-    cutoff.setHours(0, 0, 0, 0);
-    cutoff.setDate(cutoff.getDate() - (days - 1));
-    const from = localDay(cutoff);
-    const dates = (Array.isArray(dirs) ? dirs : [])
-      .filter((d) => d.type === "dir" && DATE_DIR.test(d.name) && d.name >= from)
-      .map((d) => d.name);
-
-    const lists = await pool(dates, PARALLEL, (date) => github(`/repos/${repo}/contents/logs/${date}?ref=${LOG_BRANCH}`, token, false));
-    const files = lists.flat().filter((f) => f && f.type === "file" && /\.json$/.test(f.name)).map((f) => f.path);
-
-    let done = 0;
-    let skipped = 0;
-    const parts = await pool(files, PARALLEL, async (path) => {
-      try {
-        const text = await github(`/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${LOG_BRANCH}`, token, true);
-        const data = JSON.parse(text);
-        return Array.isArray(data.events) ? data.events : [];
-      } catch (err) {
-        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) throw err;
-        skipped++;
-        return [];
-      } finally {
-        onProgress(++done, files.length);
-      }
-    });
-    return { events: parts.flat(), files: files.length, skipped };
+    if (!res.ok) throw new ApiError(res.status, `Server antwortet mit ${res.status}.`);
+    const data = await res.json();
+    return Array.isArray(data.events) ? data.events : [];
   }
 
   // ---------- Anzeige ----------
@@ -463,19 +378,13 @@
       statusEl.textContent = "Beispielansicht.";
       return;
     }
-    const repo = currentRepo();
-    const token = load(KEY_TOKEN);
     button.disabled = true;
     statusEl.textContent = "Lade …";
     try {
       const days = Number($("period").value) || 3;
-      const result = await loadEvents(repo, token, days, (done, total) => {
-        statusEl.textContent = `Lade ${done} von ${total} Dateien …`;
-      });
-      applyEvents(result.events);
-      statusEl.textContent = `${allEvents.length} Einträge aus ${result.files} Dateien` +
-        (result.skipped ? `, ${result.skipped} Dateien übersprungen` : "") +
-        `, Stand ${new Date().toLocaleTimeString("de-DE")}.`;
+      const events = await loadEvents(days, sessionPassword());
+      applyEvents(events);
+      statusEl.textContent = `${allEvents.length} Einträge, Stand ${new Date().toLocaleTimeString("de-DE")}.`;
     } catch (err) {
       statusEl.textContent = "";
       errorEl.textContent = err.message;
@@ -484,69 +393,21 @@
   }
 
   function showView() {
-    connectEl.hidden = true;
     viewEl.hidden = false;
     $("demo-banner").hidden = !demo;
-    $("repo-line").textContent = demo ? "Beispielansicht" : `Quelle: ${currentRepo()} (Branch ${LOG_BRANCH}), öffentlich lesbar`;
-    $("disconnect").textContent = demo ? "Beispiel beenden" : "Anderes Repo oder Token eintragen";
-    $("demo-open").hidden = demo;
+    $("source-line").textContent = demo ? "Beispielansicht." : "Quelle: Protokoll dieser Website.";
+    $("demo-toggle").textContent = demo ? "Zu echten Daten wechseln" : "Beispielansicht ansehen";
     refresh();
   }
 
-  function currentRepo() {
-    return load(KEY_REPO) || DEFAULT_REPO;
-  }
-
-  $("demo-open").addEventListener("click", () => {
-    demo = true;
+  $("demo-toggle").addEventListener("click", () => {
+    demo = !demo;
     showView();
-  });
-
-  $("demo-btn").addEventListener("click", () => {
-    demo = true;
-    showView();
-  });
-
-  $("connect-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const repo = $("repo").value.trim();
-    const token = $("token").value.trim();
-    const button = $("connect-btn");
-    const error = $("connect-error");
-    error.textContent = "";
-    button.disabled = true;
-    try {
-      await checkRepo(repo, token);
-      save(KEY_REPO, repo);
-      save(KEY_TOKEN, token);
-      $("token").value = "";
-      showView();
-    } catch (err) {
-      error.textContent = err.message;
-    }
-    button.disabled = false;
   });
 
   $("refresh").addEventListener("click", refresh);
   $("period").addEventListener("change", refresh);
   personEl.addEventListener("change", render);
-  $("disconnect").addEventListener("click", () => {
-    if (demo) {
-      demo = false;
-      showView();
-      return;
-    }
-    allEvents = [];
-    viewEl.hidden = true;
-    connectEl.hidden = false;
-    $("repo").value = currentRepo();
-    $("token").value = "";
-  });
-
-  // Nach dem Passwort öffnet sich direkt das öffentliche Standard-Protokoll.
-  function start() {
-    showView();
-  }
 
   // ---------- Passwort ----------
 
@@ -557,6 +418,7 @@
   const LOCKOUT_MS = 60000;
   const KEY_PW_STATE = "verlauf.pw";
   const KEY_UNLOCKED = "verlauf.unlocked";
+  const KEY_SESSION_PW = "verlauf.sessionpw";
 
   // SHA-256 in reinem JavaScript, damit es auch ohne crypto.subtle (kein https) läuft.
   function sha256Hex(text) {
@@ -604,6 +466,16 @@
     try { sessionStorage.setItem(KEY_UNLOCKED, "1"); } catch (err) { /* ignorieren */ }
   }
 
+  // Das eingegebene Passwort wird für diese Sitzung gemerkt (nur in diesem Browser-Tab),
+  // damit die Funktion es bei jedem Abruf mitschicken kann, auch nach dem Neuladen.
+  function sessionPassword() {
+    try { return sessionStorage.getItem(KEY_SESSION_PW) || memory[KEY_SESSION_PW] || ""; } catch (err) { return memory[KEY_SESSION_PW] || ""; }
+  }
+  function writeSessionPassword(pw) {
+    memory[KEY_SESSION_PW] = pw;
+    try { sessionStorage.setItem(KEY_SESSION_PW, pw); } catch (err) { /* ignorieren */ }
+  }
+
   function readPwState() {
     try {
       const s = JSON.parse(load(KEY_PW_STATE) || "null");
@@ -615,7 +487,7 @@
   function openApp() {
     $("gate").hidden = true;
     $("app").hidden = false;
-    start();
+    showView();
   }
 
   $("gate-form").addEventListener("submit", (event) => {
@@ -627,11 +499,13 @@
       error.textContent = `Zu viele Versuche. Bitte ${wait} Sekunden warten.`;
       return;
     }
-    const ok = sha256Hex(`${PW_SALT}:${$("pw").value.trim()}`) === PW_HASH;
+    const entered = $("pw").value.trim();
+    const ok = sha256Hex(`${PW_SALT}:${entered}`) === PW_HASH;
     $("pw").value = "";
     if (ok) {
       save(KEY_PW_STATE, JSON.stringify({ fails: 0, until: 0 }));
       writeUnlocked();
+      writeSessionPassword(entered);
       error.textContent = "";
       openApp();
       return;
