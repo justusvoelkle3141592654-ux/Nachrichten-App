@@ -292,7 +292,7 @@
   /* Short im Vollbild: nur der Short und der Feed, alles andere ist ausgeblendet */
   .app.immersive { background: #000; }
   .app.immersive .notice,
-  .app.immersive .nav,
+  .app.immersive .topbar,
   .app.immersive .shorts .searchbar,
   .app.immersive .shorts .status,
   .app.immersive .shortbar { display: none; }
@@ -338,32 +338,53 @@
   }
   .frame .placeholder { color: var(--muted); }
 
-  /* Untere Leiste */
-  .nav {
+  /* Kopfzeile in den Bereichen */
+  .topbar {
     flex: 0 0 auto;
     display: flex;
-    overflow-x: auto;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
     background: var(--surface);
-    border-top: 1px solid var(--border);
-    padding-bottom: env(safe-area-inset-bottom);
+    border-bottom: 1px solid var(--border);
   }
-  .tab {
-    flex: 1 0 auto;
-    min-width: 84px;
-    padding: 12px 14px;
-    font-size: 0.85rem;
-    white-space: nowrap;
-    color: var(--muted);
-    background: none;
-    border: 0;
-    border-top: 3px solid transparent;
+  .topbar .plain { padding: 8px 12px; }
+  .topbar-title { font-weight: 600; }
+
+  /* Startseite */
+  .home {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 16px;
+  }
+  .home h1 { margin: 0 0 16px; font-size: 1.4rem; }
+  .home h2 { margin: 24px 0 12px; font-size: 1rem; color: var(--muted); font-weight: 600; }
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  .tile {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 140px;
+    padding: 20px;
+    justify-content: flex-end;
+    text-align: left;
+    color: var(--text);
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: 14px;
     cursor: pointer;
   }
-  .tab[aria-current="true"] {
-    color: var(--text);
-    font-weight: 600;
-    border-top-color: var(--accent);
-  }
+  .tile:hover { border-color: var(--accent); }
+  .tile-title { font-size: 1.3rem; font-weight: 700; }
+  .tile-desc { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
+  .tiles.small .tile { min-height: 88px; padding: 14px; }
+  .tiles.small .tile-title { font-size: 1.05rem; }
+  .add-site { margin-top: 24px; }
 
   dialog {
     width: min(92vw, 420px);
@@ -395,8 +416,11 @@
     die Herkunft der Seite fehlt. Öffne die Seite über eine https-Adresse (z. B. GitHub
     Pages) oder nutze „Auf YouTube öffnen“.
   </div>
+  <header class="topbar" id="topbar" hidden>
+    <button type="button" class="plain" id="back">← Dashboard</button>
+    <span class="topbar-title" id="topbar-title"></span>
+  </header>
   <main id="main"></main>
-  <nav class="nav" id="nav" aria-label="Bereiche"></nav>
 </div>
 
 <dialog id="add-dialog">
@@ -405,7 +429,7 @@
     <label for="add-name">Name</label>
     <input type="text" id="add-name" maxlength="30" autocomplete="off" required>
     <label for="add-url">Adresse</label>
-    <input type="url" id="add-url" placeholder="https://…" autocomplete="off" required>
+    <input type="text" id="add-url" inputmode="url" placeholder="https://…" autocomplete="off" autocapitalize="off" required>
     <p class="error" id="add-error" role="alert"></p>
     <div class="actions">
       <button type="button" class="plain" id="add-cancel">Abbrechen</button>
@@ -441,16 +465,7 @@
   const SHORTS_PER_CHANNEL = 30;
   const CHANNEL_ID = /^UC[\w-]{22}$/;
 
-  // Vorinstallierte Webseiten. Eine feste Adresse kann hier bei "url" eingetragen
-  // werden. Ist sie leer, trägt man sie im Reiter einmal ein und sie bleibt gespeichert.
-  const BUILTIN_SITES = [
-    { id: "eaglercraft-web", name: "Eaglercraft Web", url: "" },
-    { id: "eaglercraft-mobile", name: "Eaglercraft Mobile", url: "" },
-  ];
-
   const KEY_CUSTOM = "dashboard.sites";
-  const KEY_URLS = "dashboard.urls";
-  const KEY_ACTIVE = "dashboard.active";
 
   // ---------- Hilfsfunktionen ----------
 
@@ -1109,61 +1124,36 @@
   // ---------- Dashboard ----------
 
   const main = document.getElementById("main");
-  const nav = document.getElementById("nav");
+  const topbar = document.getElementById("topbar");
+  const topbarTitle = document.getElementById("topbar-title");
   const dialog = document.getElementById("add-dialog");
   const addForm = document.getElementById("add-form");
   const addName = document.getElementById("add-name");
   const addUrl = document.getElementById("add-url");
   const addError = document.getElementById("add-error");
 
-  // Reiter in Reihenfolge: { id, label, pane }
+  // Bereiche: { id, label, pane, onHide?, onShow? }. "home" ist die Startseite.
   const tabs = [];
   let customSites = [];
-  let savedUrls = {};
-  let activeId = "videos";
+  let activeId = "home";
 
   function select(id) {
-    if (!tabs.some((t) => t.id === id)) id = "videos";
+    if (!tabs.some((t) => t.id === id)) id = "home";
     const previous = tabs.find((t) => t.id === activeId);
     if (previous && previous.id !== id && previous.onHide) previous.onHide();
     activeId = id;
-    save(KEY_ACTIVE, id);
     for (const t of tabs) t.pane.hidden = t.id !== id;
     const next = tabs.find((t) => t.id === id);
+    topbar.hidden = id === "home";
+    topbarTitle.textContent = next && id !== "home" ? next.label : "";
     if (next && next.onShow) next.onShow();
-    renderNav();
   }
 
-  function renderNav() {
-    const buttons = tabs.map((t) => {
-      const b = el("button", "tab", t.label);
-      b.type = "button";
-      b.setAttribute("aria-current", String(t.id === activeId));
-      b.addEventListener("click", () => select(t.id));
-      return b;
-    });
-    const add = el("button", "tab", "+ Seite");
-    add.type = "button";
-    add.addEventListener("click", openDialog);
-    nav.replaceChildren(...buttons, add);
-  }
-
-  // hooks.onHide/onShow werden beim Verlassen bzw. Öffnen des Reiters aufgerufen.
+  // hooks.onHide/onShow werden beim Verlassen bzw. Öffnen des Bereichs aufgerufen.
   function addTab(id, label, pane, hooks = {}) {
     pane.hidden = true;
     main.append(pane);
     tabs.push({ id, label, pane, ...hooks });
-  }
-
-  function addBuiltinSite(site) {
-    const url = normalizeUrl(savedUrls[site.id]) || normalizeUrl(site.url) || "";
-    const pane = createSitePane({ name: site.name, url }, {
-      onChange: (newUrl) => {
-        savedUrls[site.id] = newUrl;
-        save(KEY_URLS, savedUrls);
-      },
-    });
-    addTab(site.id, site.name, pane);
   }
 
   function addCustomSite(site) {
@@ -1180,10 +1170,45 @@
         }
         customSites = customSites.filter((s) => s.id !== site.id);
         save(KEY_CUSTOM, customSites);
-        select("videos");
+        renderHome();
+        select("home");
       },
     });
     addTab(site.id, site.name, pane);
+  }
+
+  // ---------- Startseite ----------
+
+  const homePane = el("section", "view home");
+
+  function tile(title, description, onClick, className) {
+    const button = el("button", className ? `tile ${className}` : "tile");
+    button.type = "button";
+    button.append(el("span", "tile-title", title), el("span", "tile-desc", description));
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function renderHome() {
+    const primary = el("div", "tiles");
+    primary.append(
+      tile("Videos", "Suchen und ansehen", () => select("videos")),
+      tile("Shorts", "Durch Kurzvideos scrollen", () => select("shorts")),
+    );
+    homePane.replaceChildren(el("h1", "", "Was möchtest du ansehen?"), primary);
+
+    if (customSites.length > 0) {
+      const own = el("div", "tiles small");
+      for (const site of customSites) {
+        own.append(tile(site.name, new URL(site.url).host, () => select(site.id)));
+      }
+      homePane.append(el("h2", "", "Meine Webseiten"), own);
+    }
+
+    const add = el("button", "plain add-site", "+ Webseite hinzufügen");
+    add.type = "button";
+    add.addEventListener("click", openDialog);
+    homePane.append(add);
   }
 
   function openDialog() {
@@ -1194,6 +1219,7 @@
   }
 
   document.getElementById("add-cancel").addEventListener("click", () => dialog.close());
+  document.getElementById("back").addEventListener("click", () => select("home"));
 
   addForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1212,6 +1238,7 @@
     save(KEY_CUSTOM, customSites);
     addCustomSite(site);
     dialog.close();
+    renderHome();
     select(site.id);
   });
 
@@ -1219,13 +1246,10 @@
     // Von file:// aus sendet der Browser keine Herkunft, und YouTube lehnt die Player ab.
     document.getElementById("file-notice").hidden = location.protocol !== "file:";
 
+    addTab("home", "Dashboard", homePane);
     addTab("videos", "Videos", createSearchPane());
     const shorts = createShortsPane();
     addTab("shorts", "Shorts", shorts.pane, { onHide: shorts.onHide, onShow: shorts.onShow });
-
-    const urls = load(KEY_URLS, {});
-    savedUrls = urls && typeof urls === "object" && !Array.isArray(urls) ? urls : {};
-    for (const site of BUILTIN_SITES) addBuiltinSite(site);
 
     const stored = load(KEY_CUSTOM, []);
     customSites = (Array.isArray(stored) ? stored : [])
@@ -1233,8 +1257,8 @@
       .map((s) => ({ id: s.id, name: s.name.slice(0, 30), url: normalizeUrl(s.url) }));
     for (const site of customSites) addCustomSite(site);
 
-    const active = load(KEY_ACTIVE, "videos");
-    select(typeof active === "string" ? active : "videos");
+    renderHome();
+    select("home");
   }
 
   init();
