@@ -2,8 +2,8 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YouTube-Suche</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dashboard</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -29,45 +29,58 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
   body {
     margin: 0;
+    overflow: hidden;
     background: var(--bg);
     color: var(--text);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     line-height: 1.4;
   }
-  .wrap {
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+  }
+  main {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .view { flex: 0 0 auto; }
+
+  /* Suchbereiche (Videos, Shorts) */
+  .pane {
+    width: 100%;
     max-width: 1100px;
     margin: 0 auto;
     padding: 16px;
   }
-  h1 {
-    font-size: 1.4rem;
-    margin: 8px 0 12px;
-  }
-  .search {
+  .searchbar {
     display: flex;
     gap: 8px;
   }
-  .search input {
+  input, button { font: inherit; }
+  input[type="search"], input[type="text"], input[type="url"] {
     flex: 1;
     min-width: 0;
     padding: 12px 14px;
-    font: inherit;
     color: var(--text);
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
   }
-  .search input:focus-visible,
-  button:focus-visible,
-  a:focus-visible {
+  input:focus-visible, button:focus-visible, a:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
-  .search button {
+  button.primary {
     padding: 12px 18px;
-    font: inherit;
     font-weight: 600;
     color: var(--accent-text);
     background: var(--accent);
@@ -75,9 +88,14 @@
     border-radius: 10px;
     cursor: pointer;
   }
-  .search button:disabled {
-    opacity: 0.6;
-    cursor: wait;
+  button.primary:disabled { opacity: 0.6; cursor: wait; }
+  button.plain {
+    padding: 12px 14px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
   }
   .player {
     position: relative;
@@ -88,6 +106,12 @@
     border-radius: 12px;
     overflow: hidden;
   }
+  .player.short {
+    width: min(100%, 340px);
+    aspect-ratio: 9 / 16;
+    margin-left: auto;
+    margin-right: auto;
+  }
   .player iframe {
     position: absolute;
     inset: 0;
@@ -95,7 +119,7 @@
     height: 100%;
     border: 0;
   }
-  .player .placeholder {
+  .placeholder {
     position: absolute;
     inset: 0;
     display: flex;
@@ -105,31 +129,29 @@
     text-align: center;
     color: #9a9aa3;
   }
+  .watch {
+    color: var(--muted);
+    font-size: 0.9rem;
+    text-align: center;
+  }
+  .watch a, .status a { color: var(--focus); }
   .status {
     min-height: 1.4em;
     margin: 8px 0 12px;
     color: var(--muted);
     font-size: 0.95rem;
   }
-  .status a,
-  .watch a {
-    color: var(--focus);
-  }
-  .watch {
-    color: var(--muted);
-    font-size: 0.9rem;
-  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 16px;
   }
+  .grid.short { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .card {
     display: flex;
     flex-direction: column;
     padding: 0;
     overflow: hidden;
-    font: inherit;
     color: inherit;
     text-align: left;
     background: var(--surface);
@@ -137,9 +159,7 @@
     border-radius: 12px;
     cursor: pointer;
   }
-  .card.active {
-    border-color: var(--accent);
-  }
+  .card.active { border-color: var(--accent); }
   .card img {
     display: block;
     width: 100%;
@@ -147,9 +167,8 @@
     object-fit: cover;
     background: var(--border);
   }
-  .card .info {
-    padding: 10px 12px 12px;
-  }
+  .grid.short .card img { aspect-ratio: 9 / 16; }
+  .card .info { padding: 10px 12px 12px; }
   .card .title {
     font-weight: 600;
     font-size: 0.95rem;
@@ -159,44 +178,117 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .card .channel {
-    margin-top: 4px;
-    color: var(--muted);
-    font-size: 0.85rem;
+  .card .channel { margin-top: 4px; color: var(--muted); font-size: 0.85rem; }
+
+  /* Eingebettete Webseiten */
+  .site {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
+  .bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .bar a.open {
+    flex: 0 0 auto;
+    color: var(--focus);
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+  .bar button { flex: 0 0 auto; padding: 8px 12px; }
+  .bar input { padding: 8px 12px; }
+  .frame { position: relative; flex: 1; min-height: 0; }
+  .frame iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
+  }
+  .frame .placeholder { color: var(--muted); }
+
+  /* Untere Leiste */
+  .nav {
+    flex: 0 0 auto;
+    display: flex;
+    overflow-x: auto;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tab {
+    flex: 1 0 auto;
+    min-width: 84px;
+    padding: 12px 14px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-top: 3px solid transparent;
+    cursor: pointer;
+  }
+  .tab[aria-current="true"] {
+    color: var(--text);
+    font-weight: 600;
+    border-top-color: var(--accent);
+  }
+
+  dialog {
+    width: min(92vw, 420px);
+    padding: 20px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+  dialog h2 { margin: 0 0 12px; font-size: 1.1rem; }
+  dialog label { display: block; margin: 10px 0 4px; font-size: 0.9rem; color: var(--muted); }
+  dialog input { width: 100%; }
+  dialog .error { min-height: 1.3em; margin: 8px 0 0; color: var(--accent); font-size: 0.9rem; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
   @media (max-width: 600px) {
-    .search {
-      flex-direction: column;
-    }
-    .search button {
-      width: 100%;
-    }
+    .searchbar { flex-direction: column; }
+    .searchbar button { width: 100%; }
+    .bar { flex-wrap: wrap; }
+    .bar input { flex: 1 1 100%; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>YouTube-Suche</h1>
-
-  <form class="search" id="search-form" role="search">
-    <input type="search" id="query" placeholder="Videos suchen, z. B. MrBeast" aria-label="Suchbegriff" autocomplete="off">
-    <button type="submit" id="search-btn">Suchen</button>
-  </form>
-
-  <div class="player" id="player">
-    <div class="placeholder">Wähle ein Video aus den Ergebnissen.</div>
-  </div>
-
-  <div class="watch" id="watch" hidden>
-    Video startet nicht? <a id="watch-link" target="_blank" rel="noopener noreferrer">Auf YouTube öffnen</a>
-  </div>
-
-  <div class="status" id="status" role="status" aria-live="polite"></div>
-
-  <div class="grid" id="results"></div>
+<div class="app">
+  <main id="main"></main>
+  <nav class="nav" id="nav" aria-label="Bereiche"></nav>
 </div>
 
+<dialog id="add-dialog">
+  <form id="add-form">
+    <h2>Webseite hinzufügen</h2>
+    <label for="add-name">Name</label>
+    <input type="text" id="add-name" maxlength="30" autocomplete="off" required>
+    <label for="add-url">Adresse</label>
+    <input type="url" id="add-url" placeholder="https://…" autocomplete="off" required>
+    <p class="error" id="add-error" role="alert"></p>
+    <div class="actions">
+      <button type="button" class="plain" id="add-cancel">Abbrechen</button>
+      <button type="submit" class="primary">Hinzufügen</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
+(() => {
+  "use strict";
+
   // Öffentliche Piped- und Invidious-Server. Sie werden der Reihe nach probiert.
   const PIPED_SERVERS = [
     "api.piped.private.coffee",
@@ -215,17 +307,59 @@
   const TIMEOUT_MS = 6000;
   // YouTube-Video-IDs sind immer 11 Zeichen lang. Alles andere wird verworfen.
   const VIDEO_ID = /^[\w-]{11}$/;
+  // Die Server markieren Shorts nicht zuverlässig, deshalb zählt zusätzlich die Länge.
+  const SHORT_MAX_SECONDS = 60;
+  // Die Suche liefert vor allem lange Videos, daher werden für Shorts mehrere Seiten gelesen.
+  const SHORTS_PAGES = 3;
 
-  const form = document.getElementById("search-form");
-  const input = document.getElementById("query");
-  const button = document.getElementById("search-btn");
-  const playerEl = document.getElementById("player");
-  const statusEl = document.getElementById("status");
-  const resultsEl = document.getElementById("results");
-  const watchEl = document.getElementById("watch");
-  const watchLink = document.getElementById("watch-link");
+  // Vorinstallierte Webseiten. Eine feste Adresse kann hier bei "url" eingetragen
+  // werden. Ist sie leer, trägt man sie im Reiter einmal ein und sie bleibt gespeichert.
+  const BUILTIN_SITES = [
+    { id: "eaglercraft-web", name: "Eaglercraft Web", url: "" },
+    { id: "eaglercraft-mobile", name: "Eaglercraft Mobile", url: "" },
+  ];
 
-  let searchId = 0;
+  const KEY_CUSTOM = "dashboard.sites";
+  const KEY_URLS = "dashboard.urls";
+  const KEY_ACTIVE = "dashboard.active";
+
+  // ---------- Hilfsfunktionen ----------
+
+  // Texte aus Serverantworten und Eingaben werden nur per textContent gesetzt
+  // und nie als HTML interpretiert.
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  const memory = {};
+  function load(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) return JSON.parse(raw);
+    } catch (err) { /* Speicher gesperrt oder defekt */ }
+    return key in memory ? memory[key] : fallback;
+  }
+  function save(key, value) {
+    memory[key] = value;
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* ignorieren */ }
+  }
+
+  function normalizeUrl(raw) {
+    let s = String(raw || "").trim();
+    if (!s) return null;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = "https://" + s;
+    try {
+      const u = new URL(s);
+      return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // ---------- Videosuche über Piped/Invidious ----------
 
   function buildUrl(server, query) {
     const q = encodeURIComponent(query);
@@ -247,8 +381,6 @@
     }
   }
 
-  // Liefert nur Einträge mit gültiger Video-ID. Texte bleiben Rohwerte und
-  // werden später per textContent angezeigt, nie als HTML interpretiert.
   function parseResults(server, data) {
     const list = server.type === "piped" ? data && data.items : data;
     if (!Array.isArray(list)) return [];
@@ -259,151 +391,415 @@
       let id;
       let title;
       let channel;
+      let seconds;
       if (server.type === "piped") {
         const match = typeof item.url === "string" ? item.url.match(/[?&]v=([\w-]{11})/) : null;
         id = match ? match[1] : "";
         title = item.title;
         channel = item.uploaderName;
+        seconds = item.duration;
       } else {
         id = item.videoId;
         title = item.title;
         channel = item.author;
+        seconds = item.lengthSeconds;
       }
       if (typeof id !== "string" || !VIDEO_ID.test(id)) continue;
       results.push({
         id,
         title: String(title ?? ""),
         channel: String(channel ?? ""),
+        seconds: Number(seconds),
+        isShort: item.isShort === true,
       });
     }
     return results;
   }
 
-  function setBusy(busy) {
-    button.disabled = busy;
-  }
-
-  function setStatus(text) {
-    statusEl.textContent = text;
-  }
-
-  function playVideo(id) {
-    const iframe = document.createElement("iframe");
-    iframe.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1`;
-    iframe.referrerPolicy = "strict-origin-when-cross-origin";
-    iframe.allowFullscreen = true;
-    iframe.allow = "autoplay; encrypted-media; picture-in-picture";
-    iframe.title = "YouTube-Player";
-    playerEl.replaceChildren(iframe);
-
-    // Lokal per file:// geöffnet, sendet der Browser keinen Referer, und
-    // YouTube verweigert dann oft die Einbettung. Der Link ist der Ausweg.
-    watchLink.href = `https://www.youtube.com/watch?v=${id}`;
-    watchEl.hidden = false;
-  }
-
-  function selectCard(card) {
-    for (const active of resultsEl.querySelectorAll(".card.active")) {
-      active.classList.remove("active");
-    }
-    card.classList.add("active");
-  }
-
-  function renderResults(results, server) {
-    resultsEl.replaceChildren();
-    results.forEach((r, index) => {
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "card";
-
-      const img = document.createElement("img");
-      img.src = `https://i.ytimg.com/vi/${r.id}/mqdefault.jpg`;
-      img.alt = "";
-      img.loading = "lazy";
-
-      const info = document.createElement("div");
-      info.className = "info";
-
-      const title = document.createElement("div");
-      title.className = "title";
-      title.textContent = r.title;
-
-      const channel = document.createElement("div");
-      channel.className = "channel";
-      channel.textContent = r.channel;
-
-      info.append(title, channel);
-      card.append(img, info);
-      card.addEventListener("click", () => {
-        selectCard(card);
-        playVideo(r.id);
-      });
-      resultsEl.append(card);
-
-      if (index === 0) {
-        selectCard(card);
-        playVideo(r.id);
+  // Holt bis zu `pages` Ergebnisseiten eines Servers. Scheitert schon die erste
+  // Seite, wird der Fehler weitergegeben, spätere Fehler beenden nur das Blättern.
+  async function fetchPages(server, query, pages) {
+    const all = [];
+    const seen = new Set();
+    let nextpage = null;
+    for (let page = 1; page <= pages; page++) {
+      let url = buildUrl(server, query);
+      if (page > 1) {
+        if (server.type === "piped") {
+          url = `https://${server.host}/nextpage/search?nextpage=${encodeURIComponent(nextpage)}&q=${encodeURIComponent(query)}&filter=videos`;
+        } else {
+          url += `&page=${page}`;
+        }
       }
-    });
-    setStatus(`${results.length} Ergebnisse (${server.host})`);
+      let data;
+      try {
+        data = await fetchJson(url);
+      } catch (err) {
+        if (page === 1) throw err;
+        break;
+      }
+      for (const r of parseResults(server, data)) {
+        if (!seen.has(r.id)) {
+          seen.add(r.id);
+          all.push(r);
+        }
+      }
+      if (server.type === "piped") {
+        nextpage = data && typeof data.nextpage === "string" ? data.nextpage : null;
+        if (!nextpage) break;
+      }
+    }
+    return all;
   }
 
-  function showUnreachable(query) {
-    const link = document.createElement("a");
-    link.href = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "Auf youtube.com suchen";
-
-    statusEl.replaceChildren("Alle Suchserver sind gerade nicht erreichbar. ", link);
-  }
-
-  async function search(query) {
-    const id = ++searchId;
+  // Probiert die Server der Reihe nach und nimmt den ersten mit passenden
+  // Ergebnissen. Liefert null, wenn die Suche inzwischen überholt ist.
+  async function findVideos(query, accept, pages, isCurrent) {
     let reachedAny = false;
-
-    setBusy(true);
-    resultsEl.replaceChildren();
-    setStatus("Suche läuft …");
-
-    // Öffentliche Server fallen oft kurz aus. War im ersten Durchgang keiner
-    // erreichbar, wird die Liste ein zweites Mal probiert.
     for (let round = 0; round < 2 && !reachedAny; round++) {
       for (const server of SERVERS) {
         try {
-          const data = await fetchJson(buildUrl(server, query));
-          if (id !== searchId) return;
+          const all = await fetchPages(server, query, pages);
+          if (!isCurrent()) return null;
           reachedAny = true;
-          const results = parseResults(server, data);
-          if (results.length > 0) {
-            renderResults(results, server);
-            setBusy(false);
-            return;
-          }
+          const results = all.filter(accept);
+          if (results.length > 0) return { results, server, reachedAny };
         } catch (err) {
-          if (id !== searchId) return;
+          if (!isCurrent()) return null;
         }
       }
     }
-
-    if (id !== searchId) return;
-    if (reachedAny) {
-      setStatus("Keine Videos gefunden.");
-    } else {
-      showUnreachable(query);
-    }
-    setBusy(false);
+    return { results: [], server: null, reachedAny };
   }
 
-  form.addEventListener("submit", (event) => {
+  function isShort(r) {
+    return r.isShort || (r.seconds > 0 && r.seconds <= SHORT_MAX_SECONDS);
+  }
+
+  function createSearchPane(kind) {
+    const shorts = kind === "shorts";
+    const pane = el("section", "view pane");
+
+    const form = el("form", "searchbar");
+    form.setAttribute("role", "search");
+    const input = el("input");
+    input.type = "search";
+    input.placeholder = shorts ? "Shorts suchen, z. B. Minecraft" : "Videos suchen, z. B. MrBeast";
+    input.autocomplete = "off";
+    input.setAttribute("aria-label", "Suchbegriff");
+    const button = el("button", "primary", "Suchen");
+    button.type = "submit";
+    form.append(input, button);
+
+    const player = el("div", shorts ? "player short" : "player");
+    player.append(el("div", "placeholder", shorts ? "Wähle einen Short aus den Ergebnissen." : "Wähle ein Video aus den Ergebnissen."));
+
+    const watch = el("div", "watch");
+    watch.hidden = true;
+    const watchLink = el("a", "", "Auf YouTube öffnen");
+    watchLink.target = "_blank";
+    watchLink.rel = "noopener noreferrer";
+    watch.append("Startet es nicht? ", watchLink);
+
+    const status = el("div", "status");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+
+    const grid = el("div", shorts ? "grid short" : "grid");
+
+    pane.append(form, player, watch, status, grid);
+
+    let searchId = 0;
+
+    function playVideo(id) {
+      const iframe = el("iframe");
+      iframe.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1`;
+      iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      iframe.allowFullscreen = true;
+      iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+      iframe.title = "YouTube-Player";
+      player.replaceChildren(iframe);
+
+      // Lokal per file:// geöffnet, sendet der Browser keinen Referer, und
+      // YouTube verweigert dann oft die Einbettung. Der Link ist der Ausweg.
+      watchLink.href = shorts
+        ? `https://www.youtube.com/shorts/${id}`
+        : `https://www.youtube.com/watch?v=${id}`;
+      watch.hidden = false;
+    }
+
+    function selectCard(card) {
+      for (const active of grid.querySelectorAll(".card.active")) {
+        active.classList.remove("active");
+      }
+      card.classList.add("active");
+    }
+
+    function renderResults(results, server) {
+      grid.replaceChildren();
+      results.forEach((r, index) => {
+        const card = el("button", "card");
+        card.type = "button";
+
+        const img = el("img");
+        img.src = `https://i.ytimg.com/vi/${r.id}/mqdefault.jpg`;
+        img.alt = "";
+        img.loading = "lazy";
+
+        const info = el("div", "info");
+        info.append(el("div", "title", r.title), el("div", "channel", r.channel));
+        card.append(img, info);
+        card.addEventListener("click", () => {
+          selectCard(card);
+          playVideo(r.id);
+        });
+        grid.append(card);
+
+        if (index === 0) {
+          selectCard(card);
+          playVideo(r.id);
+        }
+      });
+      status.textContent = `${results.length} ${shorts ? "Shorts" : "Ergebnisse"} (${server.host})`;
+    }
+
+    function showUnreachable(searchText) {
+      const link = el("a", "", "Auf youtube.com suchen");
+      link.href = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchText)}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      status.replaceChildren("Alle Suchserver sind gerade nicht erreichbar. ", link);
+    }
+
+    async function search(query) {
+      const id = ++searchId;
+      const isCurrent = () => id === searchId;
+      const searchText = shorts ? `${query} #shorts` : query;
+
+      button.disabled = true;
+      grid.replaceChildren();
+      status.textContent = "Suche läuft …";
+
+      const found = await findVideos(searchText, shorts ? isShort : () => true, shorts ? SHORTS_PAGES : 1, isCurrent);
+      if (!found) return;
+
+      if (found.results.length > 0) {
+        renderResults(found.results, found.server);
+      } else if (found.reachedAny) {
+        status.textContent = shorts ? "Keine Shorts gefunden." : "Keine Videos gefunden.";
+      } else {
+        showUnreachable(searchText);
+      }
+      button.disabled = false;
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const query = input.value.trim();
+      if (!query) {
+        status.textContent = "Bitte einen Suchbegriff eingeben.";
+        return;
+      }
+      search(query);
+    });
+
+    return pane;
+  }
+
+  // ---------- Eingebettete Webseiten ----------
+
+  // onChange meldet eine neue Adresse, onRemove ist nur bei eigenen Seiten gesetzt.
+  function createSitePane(site, { onChange, onRemove }) {
+    const pane = el("section", "view site");
+
+    const bar = el("form", "bar");
+    const input = el("input");
+    input.type = "text";
+    input.placeholder = `Adresse von ${site.name} einfügen`;
+    input.autocomplete = "off";
+    input.setAttribute("aria-label", `Adresse von ${site.name}`);
+    const loadBtn = el("button", "plain", "Laden");
+    loadBtn.type = "submit";
+    const openLink = el("a", "open", "Neuer Tab");
+    openLink.target = "_blank";
+    openLink.rel = "noopener noreferrer";
+    bar.append(input, loadBtn, openLink);
+
+    if (onRemove) {
+      const removeBtn = el("button", "plain", "Entfernen");
+      removeBtn.type = "button";
+      removeBtn.addEventListener("click", () => {
+        if (confirm(`„${site.name}“ entfernen?`)) onRemove();
+      });
+      bar.append(removeBtn);
+    }
+
+    const frame = el("div", "frame");
+    pane.append(bar, frame);
+
+    function show(url) {
+      if (!url) {
+        openLink.hidden = true;
+        openLink.removeAttribute("href");
+        frame.replaceChildren(el("div", "placeholder", "Adresse oben einfügen und „Laden“ drücken. Sie bleibt gespeichert."));
+        return;
+      }
+      input.value = url;
+      openLink.href = url;
+      openLink.hidden = false;
+
+      const iframe = el("iframe");
+      iframe.src = url;
+      iframe.title = site.name;
+      // Viele Seiten verbieten das Einbetten. Dann hilft der Link "Neuer Tab".
+      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-pointer-lock allow-modals allow-downloads");
+      iframe.allow = "fullscreen; autoplay; gamepad; clipboard-write";
+      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      frame.replaceChildren(iframe);
+    }
+
+    bar.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const url = normalizeUrl(input.value);
+      if (!url) {
+        input.setCustomValidity("Bitte eine gültige http(s)-Adresse eingeben.");
+        input.reportValidity();
+        input.setCustomValidity("");
+        return;
+      }
+      show(url);
+      onChange(url);
+    });
+
+    show(site.url);
+    return pane;
+  }
+
+  // ---------- Dashboard ----------
+
+  const main = document.getElementById("main");
+  const nav = document.getElementById("nav");
+  const dialog = document.getElementById("add-dialog");
+  const addForm = document.getElementById("add-form");
+  const addName = document.getElementById("add-name");
+  const addUrl = document.getElementById("add-url");
+  const addError = document.getElementById("add-error");
+
+  // Reiter in Reihenfolge: { id, label, pane }
+  const tabs = [];
+  let customSites = [];
+  let savedUrls = {};
+  let activeId = "videos";
+
+  function select(id) {
+    if (!tabs.some((t) => t.id === id)) id = "videos";
+    activeId = id;
+    save(KEY_ACTIVE, id);
+    for (const t of tabs) t.pane.hidden = t.id !== id;
+    renderNav();
+  }
+
+  function renderNav() {
+    const buttons = tabs.map((t) => {
+      const b = el("button", "tab", t.label);
+      b.type = "button";
+      b.setAttribute("aria-current", String(t.id === activeId));
+      b.addEventListener("click", () => select(t.id));
+      return b;
+    });
+    const add = el("button", "tab", "+ Seite");
+    add.type = "button";
+    add.addEventListener("click", openDialog);
+    nav.replaceChildren(...buttons, add);
+  }
+
+  function addTab(id, label, pane) {
+    pane.hidden = true;
+    main.append(pane);
+    tabs.push({ id, label, pane });
+  }
+
+  function addBuiltinSite(site) {
+    const url = normalizeUrl(savedUrls[site.id]) || normalizeUrl(site.url) || "";
+    const pane = createSitePane({ name: site.name, url }, {
+      onChange: (newUrl) => {
+        savedUrls[site.id] = newUrl;
+        save(KEY_URLS, savedUrls);
+      },
+    });
+    addTab(site.id, site.name, pane);
+  }
+
+  function addCustomSite(site) {
+    const pane = createSitePane(site, {
+      onChange: (newUrl) => {
+        site.url = newUrl;
+        save(KEY_CUSTOM, customSites);
+      },
+      onRemove: () => {
+        const index = tabs.findIndex((t) => t.id === site.id);
+        if (index >= 0) {
+          tabs[index].pane.remove();
+          tabs.splice(index, 1);
+        }
+        customSites = customSites.filter((s) => s.id !== site.id);
+        save(KEY_CUSTOM, customSites);
+        select("videos");
+      },
+    });
+    addTab(site.id, site.name, pane);
+  }
+
+  function openDialog() {
+    addForm.reset();
+    addError.textContent = "";
+    dialog.showModal();
+    addName.focus();
+  }
+
+  document.getElementById("add-cancel").addEventListener("click", () => dialog.close());
+
+  addForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    const query = input.value.trim();
-    if (!query) {
-      setStatus("Bitte einen Suchbegriff eingeben.");
+    const name = addName.value.trim();
+    const url = normalizeUrl(addUrl.value);
+    if (!name) {
+      addError.textContent = "Bitte einen Namen eingeben.";
       return;
     }
-    search(query);
+    if (!url) {
+      addError.textContent = "Bitte eine gültige http(s)-Adresse eingeben.";
+      return;
+    }
+    const site = { id: `custom-${Date.now()}`, name, url };
+    customSites.push(site);
+    save(KEY_CUSTOM, customSites);
+    addCustomSite(site);
+    dialog.close();
+    select(site.id);
   });
+
+  function init() {
+    addTab("videos", "Videos", createSearchPane("videos"));
+    addTab("shorts", "Shorts", createSearchPane("shorts"));
+
+    const urls = load(KEY_URLS, {});
+    savedUrls = urls && typeof urls === "object" && !Array.isArray(urls) ? urls : {};
+    for (const site of BUILTIN_SITES) addBuiltinSite(site);
+
+    const stored = load(KEY_CUSTOM, []);
+    customSites = (Array.isArray(stored) ? stored : [])
+      .filter((s) => s && typeof s.id === "string" && typeof s.name === "string" && normalizeUrl(s.url))
+      .map((s) => ({ id: s.id, name: s.name.slice(0, 30), url: normalizeUrl(s.url) }));
+    for (const site of customSites) addCustomSite(site);
+
+    const active = load(KEY_ACTIVE, "videos");
+    select(typeof active === "string" ? active : "videos");
+  }
+
+  init();
+})();
 </script>
 </body>
 </html>
