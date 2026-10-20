@@ -368,6 +368,7 @@
   .overlay .error { min-height: 1.3em; margin: 8px 0; color: var(--accent); font-size: 0.9rem; }
   .overlay .small { font-size: 0.85rem; }
 
+  .overlay input.who { margin-bottom: 8px; letter-spacing: normal; font-size: 1.1rem; }
   .overlay .gate-bio { margin-top: 12px; }
   dialog #bio-setup { margin-top: 8px; }
   dialog .sync-status { margin: 12px 0 0; color: var(--muted); font-size: 0.85rem; }
@@ -448,13 +449,15 @@
 <div class="app">
   <div class="overlay" id="gate" hidden>
     <form id="gate-form">
-      <h1>Dashboard</h1>
-      <p>Bitte Passwort eingeben.</p>
+      <h1>Geschützt</h1>
+      <p>Bitte mit PIN oder Fingerabdruck anmelden.</p>
       <p class="small">Gerät, angesehene Inhalte und Dauer werden protokolliert.</p>
-      <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Passwort" aria-label="Passwort">
+      <p class="small" id="who-known" hidden></p>
+      <input type="text" id="who" class="who" maxlength="30" autocomplete="off" placeholder="Gerätename, z. B. Lenas Android" aria-label="Gerätename (nur einmal)">
+      <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" aria-label="PIN">
       <p class="error" id="gate-error" role="alert"></p>
-      <button type="submit" class="primary">Öffnen</button>
-      <button type="button" class="plain gate-bio" id="gate-bio" hidden>Mit Fingerabdruck öffnen</button>
+      <button type="submit" class="primary">Entsperren</button>
+      <button type="button" class="plain gate-bio" id="gate-bio" hidden>Mit Fingerabdruck anmelden</button>
     </form>
   </div>
   <div class="notice" id="file-notice" hidden>
@@ -472,7 +475,7 @@
 <dialog id="owner-dialog">
   <form id="owner-form">
     <h2>Einstellungen</h2>
-    <label for="owner-pin">Passwort eingeben</label>
+    <label for="owner-pin">PIN eingeben</label>
     <input type="password" id="owner-pin" inputmode="numeric" autocomplete="off" maxlength="8">
     <p class="error" id="owner-error" role="alert"></p>
     <div class="actions">
@@ -547,7 +550,7 @@
 
   // Zugang: Die PIN steht nur als Hash mit Salt im Code und gilt nur in diesem Browser.
   const PIN_SALT = "dashboard-v1";
-  const PIN_HASH = "cc855f98f9e8fd1b2dfd3b68507f31a649ac570df0e7a7d8e4179179745020a0";
+  const PIN_HASH = "043cb0eb6910ffbaf8e56a7d49efabdf0a7aa96ffa60e458b90378e9b9dca561";
   const MAX_PIN_FAILS = 5;
   const PIN_LOCKOUT_MS = 60000;
   const KEY_QUEUE = "dashboard.queue";
@@ -1404,12 +1407,14 @@
       return { ok: false, message: `Zu viele Versuche. Bitte ${PIN_LOCKOUT_MS / 1000} Sekunden warten.` };
     }
     save(KEY_PIN_STATE, { fails, until: 0 });
-    return { ok: false, message: "Falsches Passwort." };
+    return { ok: false, message: "Falsche PIN." };
   }
 
   const gateEl = document.getElementById("gate");
   const gateForm = document.getElementById("gate-form");
   const pinInput = document.getElementById("pin");
+  const whoInput = document.getElementById("who");
+  const whoKnown = document.getElementById("who-known");
   const gateError = document.getElementById("gate-error");
 
   let unlocked = false;
@@ -1428,20 +1433,20 @@
     topbar.inert = !unlocked;
   }
 
-  // Der Gerätename wird automatisch vergeben (z. B. "Android Pixel 7 a3f1"). In den
-  // Einstellungen lässt er sich ändern, er bleibt dann im Browser gespeichert.
-  function autoDeviceName() {
-    const match = navigator.userAgent.match(/Android[^;)]*;\s*([^;)]+)/);
-    const model = match ? match[1].trim() : "";
-    const base = /android/i.test(navigator.userAgent)
-      ? (model && model !== "K" ? `Android ${model}` : "Android-Gerät")
-      : "Gerät";
-    return `${base} ${deviceId().slice(0, 4)}`.slice(0, 30);
+  // Der Gerätename wird nur beim ersten Mal abgefragt und dann im Browser gespeichert.
+  function showDeviceName() {
+    whoInput.hidden = Boolean(who);
+    whoKnown.hidden = !who;
+    whoKnown.textContent = who ? `Gerät: ${who}` : "";
+    whoInput.value = "";
   }
 
-  function unlockAs(method) {
+  function unlockAs(name, method) {
     unlocked = true;
     writeUnlocked();
+    who = name;
+    save(KEY_WHO, name);
+    showDeviceName();
     gateError.textContent = "";
     logEvent("Sitzung", `Entsperrt (${method})`);
     updateAccess();
@@ -1449,10 +1454,16 @@
 
   gateForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    const name = who || whoInput.value.trim();
+    if (!name) {
+      gateError.textContent = "Bitte einmal einen Gerätenamen eingeben.";
+      whoInput.focus();
+      return;
+    }
     const result = checkPin(pinInput.value);
     pinInput.value = "";
     if (result.ok) {
-      unlockAs("Passwort");
+      unlockAs(name, "PIN");
       return;
     }
     gateError.textContent = result.message;
@@ -1516,10 +1527,16 @@
   }
 
   async function tryFingerprint() {
+    const name = who || whoInput.value.trim();
+    if (!name) {
+      gateError.textContent = "Bitte einmal einen Gerätenamen eingeben.";
+      whoInput.focus();
+      return;
+    }
     try {
-      if (await fingerprintLogin()) unlockAs("Fingerabdruck");
+      if (await fingerprintLogin()) unlockAs(name, "Fingerabdruck");
     } catch (err) {
-      gateError.textContent = "Fingerabdruck abgebrochen oder fehlgeschlagen. Bitte das Passwort verwenden.";
+      gateError.textContent = "Fingerabdruck abgebrochen oder fehlgeschlagen. Bitte die PIN verwenden.";
     }
   }
   gateBio.addEventListener("click", tryFingerprint);
@@ -1545,14 +1562,15 @@
   function startAccess() {
     unlocked = readUnlocked();
     const savedName = load(KEY_WHO, "");
-    who = typeof savedName === "string" && savedName ? savedName : autoDeviceName();
+    who = typeof savedName === "string" ? savedName : "";
+    showDeviceName();
     updateAccess();
     startSync();
     gateBio.hidden = !(bioSupported() && hasPasskey());
     if (!unlocked) {
-      pinInput.focus();
+      (who ? pinInput : whoInput).focus();
       // Mit eingerichtetem Fingerabdruck erscheint die Abfrage des Betriebssystems sofort.
-      if (!gateBio.hidden) tryFingerprint();
+      if (!gateBio.hidden && who) tryFingerprint();
     }
   }
 
@@ -1742,6 +1760,7 @@
     if (newName && newName !== who) {
       who = newName;
       save(KEY_WHO, who);
+      showDeviceName();
       syncStatus.textContent = "Gerätename gespeichert.";
     }
     if (!repo && !token) return;

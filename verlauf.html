@@ -38,6 +38,26 @@
     line-height: 1.4;
   }
   .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+  .gate {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    background: var(--bg);
+  }
+  .gate form { display: flex; flex-direction: column; align-items: center; }
+  .gate p { margin: 0 0 12px; color: var(--muted); }
+  .gate input {
+    width: 200px;
+    text-align: center;
+    font-size: 1.4rem;
+    letter-spacing: 0.3em;
+  }
+  .gate .error { min-height: 1.3em; margin: 8px 0; }
   h1 { margin: 8px 0 16px; font-size: 1.4rem; }
   h2 { margin: 24px 0 8px; font-size: 1.05rem; }
   input, select, button { font: inherit; }
@@ -98,14 +118,29 @@
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="gate" id="gate" hidden>
+  <form id="gate-form">
+    <h1>Nutzungsprotokoll</h1>
+    <p>Bitte Passwort eingeben.</p>
+    <input type="password" id="pw" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Passwort" aria-label="Passwort">
+    <p class="error" id="gate-error" role="alert"></p>
+    <button type="submit" class="primary">Öffnen</button>
+  </form>
+</div>
+
+<div class="wrap" id="app" hidden>
   <h1>Nutzungsprotokoll</h1>
 
   <section class="panel" id="connect" hidden>
     <p class="hint">
-      Diese App liest das Protokoll aus einem <strong>privaten</strong> GitHub-Repo, in das die Haupt-App schreibt.
-      Der Token braucht dort nur die Berechtigung „Contents: Read-only“. Er wird nur in diesem Browser gespeichert.
+      So verbindest du die Übersicht mit dem Protokoll der Haupt-App:
     </p>
+    <ol class="hint">
+      <li>Lege auf GitHub ein <strong>privates</strong> Repo an, mit der Option „Add a README“.</li>
+      <li>Erstelle einen Fine-grained-Token nur für dieses Repo mit „Contents: Read-only“ (Einstellungen → Developer settings → Fine-grained tokens).</li>
+      <li>Trage Repo und Token unten ein. Beides bleibt nur in diesem Browser.</li>
+      <li>Trage in der Haupt-App unter „Einstellungen“ dasselbe Repo mit einem zweiten Token („Contents: Read and write“) ein. Sie schreibt dann das Protokoll dorthin.</li>
+    </ol>
     <form id="connect-form">
       <label for="repo">Privates Repo (name/repo)</label>
       <input type="text" id="repo" autocomplete="off" autocapitalize="off" required>
@@ -498,11 +533,119 @@
     $("repo").value = load(KEY_REPO);
   });
 
-  if (load(KEY_REPO) && load(KEY_TOKEN)) {
-    showView();
+  function start() {
+    if (load(KEY_REPO) && load(KEY_TOKEN)) {
+      showView();
+    } else {
+      connectEl.hidden = false;
+      $("repo").value = load(KEY_REPO);
+    }
+  }
+
+  // ---------- Passwort ----------
+
+  // Das Passwort steht nur als Hash mit Salt im Code und gilt nur in diesem Browser.
+  const PW_SALT = "verlauf-v1";
+  const PW_HASH = "9be2f9949ea89d60c12b7d4b774039988f8763924e755163ed4a233ca684c9db";
+  const MAX_FAILS = 5;
+  const LOCKOUT_MS = 60000;
+  const KEY_PW_STATE = "verlauf.pw";
+  const KEY_UNLOCKED = "verlauf.unlocked";
+
+  // SHA-256 in reinem JavaScript, damit es auch ohne crypto.subtle (kein https) läuft.
+  function sha256Hex(text) {
+    const bytes = new TextEncoder().encode(text);
+    const primes = [];
+    for (let n = 2; primes.length < 64; n++) {
+      if (primes.every((p) => n % p)) primes.push(n);
+    }
+    const frac = (x) => Math.floor((x - Math.floor(x)) * 4294967296);
+    const K = primes.map((p) => frac(Math.cbrt(p)));
+    const h = primes.slice(0, 8).map((p) => frac(Math.sqrt(p)));
+
+    const padded = new Uint8Array(((bytes.length + 9 + 63) >> 6) << 6);
+    padded.set(bytes);
+    padded[bytes.length] = 0x80;
+    const view = new DataView(padded.buffer);
+    view.setUint32(padded.length - 4, (bytes.length * 8) >>> 0);
+
+    const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+    const w = new Uint32Array(64);
+    for (let offset = 0; offset < padded.length; offset += 64) {
+      for (let i = 0; i < 16; i++) w[i] = view.getUint32(offset + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+        const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      let [a, b, c, d, e, f, g, hh] = h;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+        const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+        hh = g; g = f; f = e; e = (d + t1) >>> 0;
+        d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      [a, b, c, d, e, f, g, hh].forEach((v, i) => { h[i] = (h[i] + v) >>> 0; });
+    }
+    return h.map((v) => v.toString(16).padStart(8, "0")).join("");
+  }
+
+  function readUnlocked() {
+    try { return sessionStorage.getItem(KEY_UNLOCKED) === "1"; } catch (err) { return memory[KEY_UNLOCKED] === true; }
+  }
+  function writeUnlocked() {
+    memory[KEY_UNLOCKED] = true;
+    try { sessionStorage.setItem(KEY_UNLOCKED, "1"); } catch (err) { /* ignorieren */ }
+  }
+
+  function readPwState() {
+    try {
+      const s = JSON.parse(load(KEY_PW_STATE) || "null");
+      if (s && typeof s === "object") return { fails: Number(s.fails) || 0, until: Number(s.until) || 0 };
+    } catch (err) { /* defekt */ }
+    return { fails: 0, until: 0 };
+  }
+
+  function openApp() {
+    $("gate").hidden = true;
+    $("app").hidden = false;
+    start();
+  }
+
+  $("gate-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const error = $("gate-error");
+    const state = readPwState();
+    const wait = Math.ceil((state.until - Date.now()) / 1000);
+    if (wait > 0) {
+      error.textContent = `Zu viele Versuche. Bitte ${wait} Sekunden warten.`;
+      return;
+    }
+    const ok = sha256Hex(`${PW_SALT}:${$("pw").value.trim()}`) === PW_HASH;
+    $("pw").value = "";
+    if (ok) {
+      save(KEY_PW_STATE, JSON.stringify({ fails: 0, until: 0 }));
+      writeUnlocked();
+      error.textContent = "";
+      openApp();
+      return;
+    }
+    const fails = state.fails + 1;
+    if (fails >= MAX_FAILS) {
+      save(KEY_PW_STATE, JSON.stringify({ fails: 0, until: Date.now() + LOCKOUT_MS }));
+      error.textContent = `Zu viele Versuche. Bitte ${LOCKOUT_MS / 1000} Sekunden warten.`;
+    } else {
+      save(KEY_PW_STATE, JSON.stringify({ fails, until: 0 }));
+      error.textContent = "Falsches Passwort.";
+    }
+    $("pw").focus();
+  });
+
+  if (readUnlocked()) {
+    openApp();
   } else {
-    connectEl.hidden = false;
-    $("repo").value = load(KEY_REPO);
+    $("gate").hidden = false;
+    $("pw").focus();
   }
 })();
 </script>
