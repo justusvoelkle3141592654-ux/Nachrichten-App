@@ -1,0 +1,9 @@
+{
+  "device": "testdaten",
+  "events": [
+    { "t": "2026-10-20T13:00:00.000Z", "who": "Testgerät (Testdaten)", "kind": "Sitzung", "text": "Entsperrt (PIN)", "id": "", "seconds": 0 },
+    { "t": "2026-10-20T13:00:20.000Z", "who": "Testgerät (Testdaten)", "kind": "Suche Videos", "text": "Testsuche", "id": "", "seconds": 0 },
+    { "t": "2026-10-20T13:00:40.000Z", "who": "Testgerät (Testdaten)", "kind": "Video", "text": "Testvideo (Testdaten)", "id": "", "seconds": 95 },
+    { "t": "2026-10-20T13:03:00.000Z", "who": "Testgerät (Testdaten)", "kind": "Short", "text": "Testshort (Testdaten)", "id": "", "seconds": 28 }
+  ]
+}
